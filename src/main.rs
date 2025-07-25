@@ -3,26 +3,19 @@ use actix_multipart::Multipart;
 use actix_web::{
     get, middleware::Logger, post, web, App, HttpResponse, HttpServer, Result as ActixResult,
 };
+#[cfg(feature = "server")]
 use futures_util::TryStreamExt as _;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::fs::create_dir_all;
 use std::io::Write;
 use std::path::PathBuf;
 use uuid::Uuid;
+use cratr::{FileInfo, StorageInfo};
 
 const UPLOAD_DIR: &str = "./uploads";
 const MAX_FILE_SIZE: usize = 256 * 1024 * 1024; // 256 MB
 const MAX_FILE_COUNT: usize = 3;
 const MAX_STORAGE_SIZE: u64 = 50 * 1024 * 1024 * 1024; // 50 GB total storage limit
-
-#[derive(Serialize, Deserialize)]
-struct FileInfo {
-    name: String,
-    size: u64,
-    path: String,
-    file_type: String,
-    can_preview: bool,
-}
 
 #[derive(Serialize)]
 struct UploadResponse {
@@ -34,20 +27,6 @@ struct UploadResponse {
 #[derive(Serialize)]
 struct FileListResponse {
     files: Vec<FileInfo>,
-}
-
-#[derive(Serialize)]
-struct StorageInfo {
-    used_bytes: u64,
-    total_files: usize,
-    used_percentage: f64,
-    formatted_used: String,
-    max_size_mb: u64,
-    disk_free_bytes: u64,
-    disk_total_bytes: u64,
-    disk_used_percentage: f64,
-    formatted_disk_free: String,
-    formatted_disk_total: String,
 }
 
 // Get storage information
