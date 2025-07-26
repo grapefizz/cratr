@@ -4,7 +4,7 @@ use gloo_net::http::Request;
 use gloo_file::{FileList, File};
 use web_sys::{Event, FormData};
 
-use crate::{FileInfo, FilesResponse, StorageInfo, ApiResponse, PreviewResponse, DebugInfo};
+use crate::{FileInfo, FilesResponse, StorageInfo, ApiResponse, DebugInfo};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -47,7 +47,7 @@ pub fn App() -> impl IntoView {
             <div class="main-grid">
                 <div class="header-section border-container">
                     <h1 style="color: #cdd6f4; margin: 0; font-size: 2.5rem; font-weight: 500;">
-                        "cratr " <span class="wave">"👋"</span>
+                        "cratr"
                     </h1>
                     <p style="color: #bac2de; font-size: 1.1rem; margin: 10px 0 0 0;">
                         "drag, drop, and manage your files with style"
@@ -149,7 +149,7 @@ pub fn SearchSection(
             <input 
                 type="text"
                 class="search-input"
-                placeholder="search files... (#image #video #audio)"
+                placeholder="search files..."
                 prop:value=search_term
                 on:input=move |ev| {
                     let value = event_target_value(&ev);
@@ -157,7 +157,7 @@ pub fn SearchSection(
                 }
             />
             <div style="color: #6c7086; font-size: 12px; margin-top: 8px;">
-                "💡 use # to filter by type"
+                "use # to filter by type"
             </div>
         </div>
     }
@@ -299,6 +299,127 @@ where
 }
 
 #[component]
+fn FileItem(
+    file: FileInfo,
+    set_files: WriteSignal<Vec<FileInfo>>,
+    set_storage_info: WriteSignal<Option<StorageInfo>>,
+    set_is_loading: WriteSignal<bool>,
+) -> impl IntoView {
+    let file_name = file.name.clone();
+    let file_path = file.path.clone();
+    let file_type = file.file_type.clone();
+    let file_size = file.size;
+    
+    // Create multiple clones for different uses
+    let file_path_preview = file_path.clone();
+    let file_path_download = file_path.clone();
+    let file_path_preview_btn = file_path.clone();
+    let file_path_delete = file_path.clone();
+    let file_type_preview_check = file_type.clone();
+    let file_type_preview = file_type.clone();
+    let file_type_preview_btn = file_type.clone();
+    
+    view! {
+        <div class="file-item">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
+                <div style="color: #cdd6f4; font-weight: 500; word-break: break-word; flex: 1; margin-right: 10px;">
+                    {&file_name}
+                </div>
+                <span 
+                    class="file-type-badge"
+                    style=format!("
+                        color: {};
+                        border-color: {};
+                    ", 
+                        get_file_type_color(&file_type),
+                        get_file_type_color(&file_type)
+                    )
+                >
+                    {&file_type}
+                </span>
+            </div>
+            
+            <Show when=move || is_previewable_file(&file_type_preview_check)>
+                <div class="file-preview">
+                    {
+                        if file_type_preview == "image" {
+                            view! {
+                                <img 
+                                    src=format!("/download/{}", file_path_preview)
+                                    alt=file_name.clone()
+                                    style="max-width: 100%; max-height: 250px; object-fit: contain;"
+                                    loading="lazy"
+                                />
+                            }.into_view()
+                        } else if file_type_preview == "video" {
+                            view! {
+                                <video 
+                                    controls
+                                    style="max-width: 100%; max-height: 250px;"
+                                    preload="metadata"
+                                >
+                                    <source src=format!("/download/{}", file_path_preview) />
+                                    "Your browser does not support the video tag."
+                                </video>
+                            }.into_view()
+                        } else {
+                            view! { <div></div> }.into_view()
+                        }
+                    }
+                </div>
+            </Show>
+            
+            <div style="color: #a6adc8; margin-bottom: 20px; font-size: 14px;">
+                "size: " {format_file_size(file_size)}
+            </div>
+            
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: auto;">
+                <a 
+                    href=format!("/download/{}", file_path_download)
+                    class="action-btn"
+                    download
+                >
+                    "download"
+                </a>
+                
+                <Show when=move || is_previewable_file(&file_type_preview_btn)>
+                    <a 
+                        href=format!("/download/{}", file_path_preview_btn)
+                        class="action-btn"
+                        target="_blank"
+                    >
+                        "preview"
+                    </a>
+                </Show>
+                
+                <button
+                    class="action-btn delete-btn"
+                    on:click={
+                        move |_| {
+                            let file_path = file_path_delete.clone();
+                            spawn_local(async move {
+                                match Request::post(&format!("/delete/{}", file_path)).send().await {
+                                    Ok(_) => {
+                                        spawn_local(async move {
+                                            load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
+                                        });
+                                    }
+                                    Err(e) => {
+                                        web_sys::console::log_1(&format!("Delete failed: {}", e).into());
+                                    }
+                                }
+                            });
+                        }
+                    }
+                >
+                    "delete"
+                </button>
+            </div>
+        </div>
+    }
+}
+
+#[component]
 fn FilesSection(
     files: Memo<Vec<FileInfo>>,
     is_loading: ReadSignal<bool>,
@@ -323,7 +444,7 @@ fn FilesSection(
                                             padding: 40px 20px;
                                             color: #bac2de;
                                         ">
-                                            <div style="font-size: 32px; margin-bottom: 10px;">"📁"</div>
+                                            <div style="font-size: 32px; margin-bottom: 10px;">"[ ]"</div>
                                             <div>"no files uploaded yet"</div>
                                             <div style="color: #6c7086; font-size: 14px; margin-top: 5px;">
                                                 "upload some files to get started"
@@ -338,63 +459,12 @@ fn FilesSection(
                                         key=|file| file.path.clone()
                                         let:file
                                     >
-                                        <div class="file-item">
-                                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
-                                                <div style="color: #cdd6f4; font-weight: 500; word-break: break-word;">
-                                                    {&file.name}
-                                                </div>
-                                                <span 
-                                                    class="file-type-badge"
-                                                    style=format!("
-                                                        color: {};
-                                                        border-color: {};
-                                                    ", 
-                                                        get_file_type_color(&file.file_type),
-                                                        get_file_type_color(&file.file_type)
-                                                    )
-                                                >
-                                                    {&file.file_type}
-                                                </span>
-                                            </div>
-                                            
-                                            <div style="color: #a6adc8; margin-bottom: 15px; font-size: 14px;">
-                                                "size: " {format_file_size(file.size)}
-                                            </div>
-                                            
-                                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                                                <a 
-                                                    href=format!("/download/{}", file.path)
-                                                    class="action-btn"
-                                                    download
-                                                >
-                                                    "download"
-                                                </a>
-                                                
-                                                <button
-                                                    class="action-btn delete-btn"
-                                                    on:click={
-                                                        let file_path = file.path.clone();
-                                                        move |_| {
-                                                            let file_path = file_path.clone();
-                                                            spawn_local(async move {
-                                                                match Request::post(&format!("/delete/{}", file_path)).send().await {
-                                                                    Ok(_) => {
-                                                                        spawn_local(async move {
-                                                                            load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
-                                                                        });
-                                                                    }
-                                                                    Err(e) => {
-                                                                        web_sys::console::log_1(&format!("Delete failed: {}", e).into());
-                                                                    }
-                                                                }
-                                                            });
-                                                        }
-                                                    }
-                                                >
-                                                    "delete"
-                                                </button>
-                                            </div>
-                                        </div>
+                                        <FileItem 
+                                            file=file 
+                                            set_files=set_files
+                                            set_storage_info=set_storage_info 
+                                            set_is_loading=set_is_loading
+                                        />
                                     </For>
                                 </div>
                             </Show>
@@ -522,6 +592,10 @@ fn get_file_type_color(file_type: &str) -> &'static str {
     }
 }
 
+fn is_previewable_file(file_type: &str) -> bool {
+    matches!(file_type, "image" | "video")
+}
+
 #[wasm_bindgen]
 pub fn run() {
     console_error_panic_hook::set_once();
@@ -646,7 +720,7 @@ body {
 }
 
 .choose-files-btn, .upload-files-btn {
-    background-color: #11111b;
+    background-color: #1e1e2e;
     border: 2px solid #45475a;
     color: #cdd6f4;
     padding: 10px 20px;
@@ -703,10 +777,11 @@ body {
 .file-item {
     background-color: #1e1e2e;
     border: 2px solid #45475a;
-    padding: 15px;
+    padding: 20px;
     margin: 10px 0;
     transition: border-color 0.2s ease-out;
     position: relative;
+    min-height: 300px;
 }
 
 .file-item::before {
@@ -736,8 +811,9 @@ body {
     padding: 10px 15px;
     font-family: "DM Mono", monospace;
     font-size: 16px;
-    width: 100%;
+    width: calc(100% - 34px);
     transition: border-color 0.2s ease-out;
+    box-sizing: border-box;
 }
 
 .search-input:focus {
@@ -751,8 +827,8 @@ body {
 
 .files-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 15px;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+    gap: 20px;
     margin-top: 20px;
 }
 
@@ -760,12 +836,12 @@ body {
     background-color: #11111b;
     border: 2px solid #45475a;
     color: #cdd6f4;
-    padding: 6px 12px;
+    padding: 8px 16px;
     cursor: pointer;
     font-family: "DM Mono", monospace;
     font-size: 14px;
     transition: border-color 0.2s ease-out;
-    margin: 2px;
+    margin: 4px;
     text-decoration: none;
     display: inline-block;
 }
@@ -824,23 +900,28 @@ body {
     font-weight: 500;
 }
 
-.wave {
-    animation-name: wave-animation;
-    animation-duration: 2.5s;
-    animation-iteration-count: infinite;
-    transform-origin: 70% 70%;
-    display: inline-block;
+.file-preview {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border: 1px solid #45475a;
+    border-radius: 8px;
+    overflow: hidden;
+    background-color: #11111b;
+    min-height: 180px;
+    margin-bottom: 15px;
 }
 
-@keyframes wave-animation {
-    0% { transform: rotate(0deg); }
-    10% { transform: rotate(14deg); }
-    20% { transform: rotate(-8deg); }
-    30% { transform: rotate(14deg); }
-    40% { transform: rotate(-4deg); }
-    50% { transform: rotate(10deg); }
-    60% { transform: rotate(0deg); }
-    100% { transform: rotate(0deg); }
+.file-preview img,
+.file-preview video {
+    max-width: 100%;
+    max-height: 250px;
+    object-fit: contain;
+    border-radius: 6px;
+}
+
+.file-preview video {
+    width: 100%;
 }
 
 /* Responsive design */
