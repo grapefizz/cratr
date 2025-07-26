@@ -1,3 +1,5 @@
 .DS_Store
 /target
 /uploads
+/static/cratr.js
+/static/cratr_bg.wasm
