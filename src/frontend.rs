@@ -2,9 +2,10 @@ use leptos::*;
 use wasm_bindgen::prelude::*;
 use gloo_net::http::Request;
 use gloo_file::{FileList, File};
+use gloo_timers::future::TimeoutFuture;
 use web_sys::{Event, FormData};
 
-use crate::{FileInfo, FilesResponse, StorageInfo, ApiResponse, DebugInfo};
+use crate::{FileInfo, FilesResponse, StorageInfo, ApiResponse, DebugInfo, LoginRequest, LoginResponse, AuthStatus};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -13,13 +14,28 @@ pub fn App() -> impl IntoView {
     let (search_term, set_search_term) = create_signal(String::new());
     let (is_loading, set_is_loading) = create_signal(false);
     let (debug_mode, set_debug_mode) = create_signal(false);
+    let (is_authenticated, set_is_authenticated) = create_signal(false);
+    let (username, set_username) = create_signal(String::new());
+    let (password, set_password) = create_signal(String::new());
+    let (login_error, set_login_error) = create_signal(None::<String>);
 
-    // Load initial data when component mounts
+    // Check authentication status on mount
     create_effect(move |_| {
         spawn_local(async move {
-            load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
-            load_debug_info(set_debug_mode).await;
+            check_auth_status(set_is_authenticated).await;
         });
+    });
+
+    // Load initial data when component mounts and user is authenticated
+    create_effect(move |_| {
+        if is_authenticated.get() {
+            spawn_local(async move {
+                // Small delay to ensure session is fully established
+                TimeoutFuture::new(100).await;
+                load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
+                load_debug_info(set_debug_mode).await;
+            });
+        }
     });
 
     // Create memo for filtered files
@@ -44,48 +60,78 @@ pub fn App() -> impl IntoView {
     view! {
         <div class="app">
             <StyleProvider />
-            <div class="main-grid">
-                <div class="header-section border-container">
-                    <h1 style="color: #cdd6f4; margin: 0; font-size: 2.5rem; font-weight: 500;">
-                        "cratr"
-                    </h1>
-                    <p style="color: #bac2de; font-size: 1.1rem; margin: 10px 0 0 0;">
-                        "drag, drop, and manage your files with style"
-                    </p>
-                </div>
-                
-                <div class="storage-section border-container">
-                    <StorageSection storage_info=storage_info />
-                </div>
-                
-                <div class="upload-section border-container">
-                    <UploadSection 
-                        debug_mode=debug_mode
-                        on_upload_complete=move || {
-                            spawn_local(async move {
-                                load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
-                            });
-                        }
+            <Show 
+                when=move || is_authenticated.get()
+                fallback=move || view! {
+                    <LoginForm 
+                        username=username
+                        set_username=set_username
+                        password=password
+                        set_password=set_password
+                        login_error=login_error
+                        set_login_error=set_login_error
+                        set_is_authenticated=set_is_authenticated
                     />
+                }
+            >
+                <div class="main-grid">
+                    <div class="header-section border-container">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <h1 style="color: #cdd6f4; margin: 0; font-size: 2.5rem; font-weight: 500;">
+                                    "cratr"
+                                </h1>
+                                <p style="color: #bac2de; font-size: 1.1rem; margin: 10px 0 0 0;">
+                                    "drag, drop, and manage your files with style"
+                                </p>
+                            </div>
+                            <button 
+                                type="button"
+                                class="logout-btn border-container"
+                                on:click=move |_| {
+                                    spawn_local(async move {
+                                        logout_user(set_is_authenticated).await;
+                                    });
+                                }
+                            >
+                                "logout"
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="storage-section border-container">
+                        <StorageSection storage_info=storage_info />
+                    </div>
+                    
+                    <div class="upload-section border-container">
+                        <UploadSection 
+                            debug_mode=debug_mode
+                            on_upload_complete=move || {
+                                spawn_local(async move {
+                                    load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
+                                });
+                            }
+                        />
+                    </div>
+                    
+                    <div class="search-section border-container">
+                        <SearchSection 
+                            search_term=search_term
+                            set_search_term=set_search_term
+                        />
+                    </div>
+                    
+                    <div class="files-section border-container">
+                        <FilesSection 
+                            files=filtered_files
+                            is_loading=is_loading
+                            set_files=set_files
+                            set_storage_info=set_storage_info
+                            set_is_loading=set_is_loading
+                        />
+                    </div>
                 </div>
-                
-                <div class="search-section border-container">
-                    <SearchSection 
-                        search_term=search_term
-                        set_search_term=set_search_term
-                    />
-                </div>
-                
-                <div class="files-section border-container">
-                    <FilesSection 
-                        files=filtered_files
-                        is_loading=is_loading
-                        set_files=set_files
-                        set_storage_info=set_storage_info
-                        set_is_loading=set_is_loading
-                    />
-                </div>
-            </div>
+            </Show>
         </div>
     }
 }
@@ -103,31 +149,30 @@ pub fn StorageSection(
             {move || {
                 if let Some(info) = storage_info.get() {
                     view! {
-                        <div>
-                            <div class="storage-stats">
-                                <div class="stat-item">
-                                    "used space"
-                                    <div class="stat-value">{&info.formatted_used}</div>
-                                </div>
-                                <div class="stat-item">
-                                    "total files"
-                                    <div class="stat-value">{info.total_files}</div>
-                                </div>
-                                <div class="stat-item">
-                                    "usage"
-                                    <div class="stat-value">{format!("{:.1}%", info.used_percentage)}</div>
-                                </div>
+                        <div class="storage-stats-grid">
+                            <div class="stat-box border-container">
+                                <div class="stat-value">{&info.formatted_used}</div>
+                                <div class="stat-label">"used space"</div>
+                            </div>
+                            <div class="stat-box border-container">
+                                <div class="stat-value">{info.total_files}</div>
+                                <div class="stat-label">"total files"</div>
+                            </div>
+                            <div class="stat-box border-container">
+                                <div class="stat-value">{format!("{:.1}%", info.used_percentage)}</div>
+                                <div class="stat-label">"usage"</div>
                             </div>
                             
-                            <div class="progress-bar">
-                                <div 
-                                    class="progress-fill"
-                                    style=format!("width: {:.1}%", info.used_percentage.min(100.0))
-                                ></div>
-                            </div>
-                            
-                            <div style="margin-top: 15px; font-size: 14px; color: #a6adc8;">
-                                "disk: " {&info.formatted_disk_free} " free of " {&info.formatted_disk_total}
+                            <div class="progress-section">
+                                <div class="progress-bar">
+                                    <div 
+                                        class="progress-fill"
+                                        style=format!("width: {:.1}%", info.used_percentage.min(100.0))
+                                    ></div>
+                                </div>
+                                <div class="disk-info">
+                                    "disk: " {&info.formatted_disk_free} " free of " {&info.formatted_disk_total}
+                                </div>
                             </div>
                         </div>
                     }.into_view()
@@ -140,6 +185,113 @@ pub fn StorageSection(
 }
 
 #[component]
+pub fn LoginForm(
+    username: ReadSignal<String>,
+    set_username: WriteSignal<String>,
+    password: ReadSignal<String>,
+    set_password: WriteSignal<String>,
+    login_error: ReadSignal<Option<String>>,
+    set_login_error: WriteSignal<Option<String>>,
+    set_is_authenticated: WriteSignal<bool>,
+) -> impl IntoView {
+    view! {
+        <div class="login-grid">
+            <div class="login-header border-container">
+                <h1 style="color: #cdd6f4; margin: 0 0 10px 0; font-size: 2.5rem; font-weight: 500;">
+                    "cratr"
+                </h1>
+                <p style="color: #bac2de; font-size: 1.1rem; margin: 0;">
+                    "secure file management system"
+                </p>
+            </div>
+            
+            <div class="login-form-section border-container">
+                <Show when=move || login_error.get().is_some()>
+                    <div class="login-error border-container">
+                        {move || login_error.get().unwrap_or_default()}
+                    </div>
+                </Show>
+                
+                <form on:submit=move |e| {
+                    e.prevent_default();
+                    let username_val = username.get();
+                    let password_val = password.get();
+                    
+                    spawn_local(async move {
+                        set_login_error.set(None);
+                        match login_user(&username_val, &password_val).await {
+                            Ok(response) => {
+                                if response.authenticated {
+                                    set_is_authenticated.set(true);
+                                } else {
+                                    set_login_error.set(Some(response.message));
+                                }
+                            }
+                            Err(e) => {
+                                set_login_error.set(Some(format!("Login failed: {}", e)));
+                            }
+                        }
+                    });
+                }>
+                    <div class="form-field">
+                        <label class="field-label">"username"</label>
+                        <input
+                            type="text"
+                            class="login-input username-input border-container"
+                            prop:value=move || username.get()
+                            on:input=move |e| set_username.set(event_target_value(&e))
+                            placeholder="enter username"
+                            required
+                        />
+                    </div>
+                    
+                    <div class="form-field">
+                        <label class="field-label">"password"</label>
+                        <input
+                            type="password"
+                            class="login-input password-input border-container"
+                            prop:value=move || password.get()
+                            on:input=move |e| set_password.set(event_target_value(&e))
+                            placeholder="enter password"
+                            required
+                        />
+                    </div>
+                    
+                    <div class="login-actions">
+                        <button type="submit" class="login-btn border-container">
+                            "authenticate"
+                        </button>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="login-info border-container">
+                <div class="info-section">
+                    <h3 style="color: #cdd6f4; margin: 0 0 10px 0; font-size: 1.2rem;">
+                        "default credentials"
+                    </h3>
+                    <div class="credential-info">
+                        <div class="credential-item">
+                            <span class="credential-label">"username:"</span>
+                            <span class="credential-value border-container">"admin"</span>
+                        </div>
+                        <div class="credential-item">
+                            <span class="credential-label">"password:"</span>
+                            <span class="credential-value border-container">"admin"</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="security-note">
+                    <p style="color: #f38ba8; font-size: 14px; margin: 0;">
+                        "⚠ change default credentials in production"
+                    </p>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[component]
 pub fn SearchSection(
     search_term: ReadSignal<String>,
     set_search_term: WriteSignal<String>,
@@ -148,7 +300,7 @@ pub fn SearchSection(
         <div>
             <input 
                 type="text"
-                class="search-input"
+                class="search-input border-container"
                 placeholder="search files..."
                 prop:value=search_term
                 on:input=move |ev| {
@@ -252,7 +404,7 @@ where
                     />
                     <button 
                         type="button"
-                        class="choose-files-btn"
+                        class="choose-files-btn border-container"
                         on:click=on_choose_files_click
                     >
                         "choose files"
@@ -287,7 +439,7 @@ where
                 
                 <button 
                     type="button"
-                    class="upload-files-btn"
+                    class="upload-files-btn border-container"
                     disabled=move || selected_files.get().is_empty() || is_uploading.get()
                     on:click=on_upload_click
                 >
@@ -376,7 +528,7 @@ fn FileItem(
             <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: auto;">
                 <a 
                     href=format!("/download/{}", file_path_download)
-                    class="action-btn"
+                    class="action-btn border-container"
                     download
                 >
                     "download"
@@ -385,7 +537,7 @@ fn FileItem(
                 <Show when=move || is_previewable_file(&file_type_preview_btn)>
                     <a 
                         href=format!("/download/{}", file_path_preview_btn)
-                        class="action-btn"
+                        class="action-btn border-container"
                         target="_blank"
                     >
                         "preview"
@@ -393,9 +545,11 @@ fn FileItem(
                 </Show>
                 
                 <button
-                    class="action-btn delete-btn"
+                    type="button"
+                    class="action-btn delete-btn border-container"
                     on:click={
-                        move |_| {
+                        move |e| {
+                            e.prevent_default();
                             let file_path = file_path_delete.clone();
                             spawn_local(async move {
                                 match Request::post(&format!("/delete/{}", file_path)).send().await {
@@ -502,31 +656,55 @@ async fn load_files_and_storage(
     web_sys::console::log_1(&"Loading files and storage...".into());
     set_is_loading.set(true);
     
-    // Make requests concurrently
-    let files_request = async {
+    // Make requests individually with better error handling
+    let files_result = async {
         web_sys::console::log_1(&"Requesting files...".into());
-        let response = Request::get("/files").send().await?;
-        response.json::<FilesResponse>().await
-    };
+        match Request::get("/files").send().await {
+            Ok(response) => {
+                if response.status() == 200 {
+                    response.json::<FilesResponse>().await.map_err(|e| format!("Failed to parse files response: {:?}", e))
+                } else {
+                    Err(format!("Files request failed with status: {}", response.status()))
+                }
+            }
+            Err(e) => Err(format!("Files request failed: {:?}", e))
+        }
+    }.await;
     
-    let storage_request = async {
+    let storage_result = async {
         web_sys::console::log_1(&"Requesting storage info...".into());
-        let response = Request::get("/storage").send().await?;
-        response.json::<StorageInfo>().await
-    };
+        match Request::get("/storage").send().await {
+            Ok(response) => {
+                if response.status() == 200 {
+                    response.json::<StorageInfo>().await.map_err(|e| format!("Failed to parse storage response: {:?}", e))
+                } else {
+                    Err(format!("Storage request failed with status: {}", response.status()))
+                }
+            }
+            Err(e) => Err(format!("Storage request failed: {:?}", e))
+        }
+    }.await;
     
-    // Wait for both requests
-    match futures::try_join!(files_request, storage_request) {
-        Ok((files_response, storage_response)) => {
+    // Handle results separately
+    match files_result {
+        Ok(files_response) => {
             web_sys::console::log_1(&format!("Loaded {} files", files_response.files.len()).into());
-            web_sys::console::log_1(&format!("Storage: {} free", storage_response.formatted_disk_free).into());
             set_files.set(files_response.files);
+        },
+        Err(e) => {
+            web_sys::console::log_1(&format!("Error loading files: {}", e).into());
+            set_files.set(Vec::new());
+        }
+    }
+    
+    match storage_result {
+        Ok(storage_response) => {
+            web_sys::console::log_1(&format!("Storage: {} free", storage_response.formatted_disk_free).into());
             set_storage_info.set(Some(storage_response));
         },
         Err(e) => {
-            web_sys::console::log_1(&format!("Error loading data: {:?}", e).into());
-            // Set empty data on error
-            set_files.set(Vec::new());
+            web_sys::console::log_1(&format!("Error loading storage: {}", e).into());
+            set_storage_info.set(None);
         }
     }
     
@@ -561,6 +739,65 @@ async fn delete_file_api(filename: &str) -> Result<ApiResponse, String> {
         
     response.json::<ApiResponse>().await
         .map_err(|e| format!("Failed to parse response: {:?}", e))
+}
+
+async fn check_auth_status(set_is_authenticated: WriteSignal<bool>) {
+    web_sys::console::log_1(&"Checking authentication status...".into());
+    match Request::get("/auth/status").send().await {
+        Ok(response) => {
+            if response.status() == 200 {
+                match response.json::<AuthStatus>().await {
+                    Ok(auth_status) => {
+                        web_sys::console::log_1(&format!("Auth status: authenticated={}", auth_status.authenticated).into());
+                        set_is_authenticated.set(auth_status.authenticated);
+                    }
+                    Err(e) => {
+                        web_sys::console::log_1(&format!("Failed to parse auth response: {:?}", e).into());
+                        set_is_authenticated.set(false);
+                    }
+                }
+            } else {
+                web_sys::console::log_1(&format!("Auth status request failed with status: {}", response.status()).into());
+                set_is_authenticated.set(false);
+            }
+        }
+        Err(e) => {
+            web_sys::console::log_1(&format!("Auth status request failed: {:?}", e).into());
+            set_is_authenticated.set(false);
+        }
+    }
+}
+
+async fn login_user(username: &str, password: &str) -> Result<LoginResponse, String> {
+    let login_request = LoginRequest {
+        username: username.to_string(),
+        password: password.to_string(),
+    };
+    
+    let request_body = serde_json::to_string(&login_request)
+        .map_err(|e| format!("Serialization error: {:?}", e))?;
+    
+    let response = Request::post("/login")
+        .header("Content-Type", "application/json")
+        .body(request_body)
+        .map_err(|e| format!("Request body error: {:?}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Login request failed: {:?}", e))?;
+        
+    response.json::<LoginResponse>().await
+        .map_err(|e| format!("Failed to parse login response: {:?}", e))
+}
+
+async fn logout_user(set_is_authenticated: WriteSignal<bool>) {
+    match Request::post("/logout").send().await {
+        Ok(_) => {
+            set_is_authenticated.set(false);
+        }
+        Err(e) => {
+            web_sys::console::log_1(&format!("Logout failed: {:?}", e).into());
+        }
+    }
 }
 
 fn format_file_size(size: u64) -> String {
@@ -723,7 +960,7 @@ body {
     background-color: #1e1e2e;
     border: 2px solid #45475a;
     color: #cdd6f4;
-    padding: 10px 20px;
+    padding: 20px 20px 10px 20px;
     cursor: pointer;
     font-family: "DM Mono", monospace;
     font-size: 16px;
@@ -732,26 +969,26 @@ body {
     margin: 5px;
 }
 
-.choose-files-btn::before {
-    content: "choose";
+.choose-files-btn.border-container::before {
+    content: "btn";
     position: absolute;
     top: -12px;
     left: 10px;
     background-color: #1e1e2e;
     padding: 0 8px;
-    font-size: 14px;
+    font-size: 12px;
     color: #45475a;
     transition: color 0.2s ease-out;
 }
 
-.upload-files-btn::before {
-    content: "upload";
+.upload-files-btn.border-container::before {
+    content: "btn";
     position: absolute;
     top: -12px;
     left: 10px;
     background-color: #1e1e2e;
     padding: 0 8px;
-    font-size: 14px;
+    font-size: 12px;
     color: #45475a;
     transition: color 0.2s ease-out;
 }
@@ -760,7 +997,7 @@ body {
     border-color: #a6e3a1;
 }
 
-.choose-files-btn:hover::before, .upload-files-btn:hover:not(:disabled)::before {
+.choose-files-btn:hover.border-container::before, .upload-files-btn:hover:not(:disabled).border-container::before {
     color: #a6e3a1;
 }
 
@@ -770,7 +1007,7 @@ body {
     cursor: not-allowed;
 }
 
-.upload-files-btn:disabled::before {
+.upload-files-btn:disabled.border-container::before {
     color: #313244;
 }
 
@@ -805,20 +1042,37 @@ body {
 }
 
 .search-input {
-    background-color: #11111b;
+    background-color: #1e1e2e;
     border: 2px solid #45475a;
     color: #cdd6f4;
-    padding: 10px 15px;
+    padding: 20px 15px 10px 15px;
     font-family: "DM Mono", monospace;
     font-size: 16px;
     width: calc(100% - 34px);
     transition: border-color 0.2s ease-out;
     box-sizing: border-box;
+    position: relative;
+}
+
+.search-input.border-container::before {
+    content: "input";
+    position: absolute;
+    top: -12px;
+    left: 15px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
 }
 
 .search-input:focus {
     outline: none;
     border-color: #fab387;
+}
+
+.search-input:focus.border-container::before {
+    color: #fab387;
 }
 
 .search-input::placeholder {
@@ -833,10 +1087,10 @@ body {
 }
 
 .action-btn {
-    background-color: #11111b;
+    background-color: #1e1e2e;
     border: 2px solid #45475a;
     color: #cdd6f4;
-    padding: 8px 16px;
+    padding: 20px 16px 8px 16px;
     cursor: pointer;
     font-family: "DM Mono", monospace;
     font-size: 14px;
@@ -844,6 +1098,19 @@ body {
     margin: 4px;
     text-decoration: none;
     display: inline-block;
+    position: relative;
+}
+
+.action-btn.border-container::before {
+    content: "btn";
+    position: absolute;
+    top: -12px;
+    left: 10px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
 }
 
 .action-btn:hover {
@@ -852,12 +1119,53 @@ body {
     text-decoration: none;
 }
 
-.delete-btn {
-    border-color: #45475a;
+.action-btn:hover.border-container::before {
+    color: #89b4fa;
+}
+
+.delete-btn.border-container::before {
+    content: "del";
 }
 
 .delete-btn:hover {
     border-color: #f38ba8;
+}
+
+.delete-btn:hover.border-container::before {
+    color: #f38ba8;
+}
+
+.logout-btn {
+    background-color: #1e1e2e;
+    border: 2px solid #45475a;
+    color: #cdd6f4;
+    padding: 20px 16px 8px 16px;
+    cursor: pointer;
+    font-family: "DM Mono", monospace;
+    font-size: 14px;
+    transition: border-color 0.2s ease-out;
+    margin: 4px;
+    position: relative;
+}
+
+.logout-btn.border-container::before {
+    content: "logout";
+    position: absolute;
+    top: -12px;
+    left: 10px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.logout-btn:hover {
+    border-color: #f38ba8;
+}
+
+.logout-btn:hover.border-container::before {
+    color: #f38ba8;
 }
 
 .storage-stats {
@@ -877,6 +1185,109 @@ body {
     color: #cdd6f4;
     font-weight: 500;
     font-size: 16px;
+}
+
+.storage-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: auto auto;
+    gap: 15px;
+    margin: 15px 0;
+}
+
+.stat-box {
+    text-align: center;
+    padding: 15px;
+    position: relative;
+}
+
+.stat-box::before {
+    content: "";
+}
+
+.stat-box:nth-child(1)::before {
+    content: "used";
+    position: absolute;
+    top: -12px;
+    left: 15px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.stat-box:nth-child(2)::before {
+    content: "files";
+    position: absolute;
+    top: -12px;
+    left: 15px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.stat-box:nth-child(3)::before {
+    content: "usage";
+    position: absolute;
+    top: -12px;
+    left: 15px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.stat-box:nth-child(1):hover {
+    border-color: #a6e3a1;
+}
+
+.stat-box:nth-child(1):hover::before {
+    color: #a6e3a1;
+}
+
+.stat-box:nth-child(2):hover {
+    border-color: #89b4fa;
+}
+
+.stat-box:nth-child(2):hover::before {
+    color: #89b4fa;
+}
+
+.stat-box:nth-child(3):hover {
+    border-color: #f38ba8;
+}
+
+.stat-box:nth-child(3):hover::before {
+    color: #f38ba8;
+}
+
+.stat-box .stat-value {
+    color: #cdd6f4;
+    font-weight: 500;
+    font-size: 18px;
+    margin-bottom: 5px;
+}
+
+.stat-box .stat-label {
+    color: #bac2de;
+    font-size: 12px;
+    text-transform: lowercase;
+}
+
+.progress-section {
+    grid-column: 1 / span 3;
+    padding: 15px 0;
+}
+
+.disk-info {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #a6adc8;
+    text-align: center;
 }
 
 .progress-bar {
@@ -907,7 +1318,7 @@ body {
     border: 1px solid #45475a;
     border-radius: 8px;
     overflow: hidden;
-    background-color: #11111b;
+    background-color: #1e1e2e;
     min-height: 180px;
     margin-bottom: 15px;
 }
@@ -939,6 +1350,306 @@ body {
     .files-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* Login Form Styles - Matching site design language */
+.login-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 20px;
+    padding: 40px 20px;
+    max-width: 500px;
+    margin: 0 auto;
+    min-height: 100vh;
+    align-content: center;
+}
+
+.login-header {
+    text-align: center;
+    padding: 30px;
+}
+
+.login-header::before {
+    content: "system";
+}
+
+.login-header:hover {
+    border-color: #cba6f7;
+}
+
+.login-header:hover::before {
+    color: #cba6f7;
+}
+
+.login-form-section {
+    padding: 30px;
+}
+
+.login-form-section::before {
+    content: "authenticate";
+}
+
+.login-form-section:hover {
+    border-color: #89b4fa;
+}
+
+.login-form-section:hover::before {
+    color: #89b4fa;
+}
+
+.login-info {
+    padding: 25px;
+}
+
+.login-info::before {
+    content: "credentials";
+}
+
+.login-info:hover {
+    border-color: #a6e3a1;
+}
+
+.login-info:hover::before {
+    color: #a6e3a1;
+}
+
+.form-field {
+    margin-bottom: 20px;
+}
+
+.field-label {
+    display: block;
+    color: #cdd6f4;
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 8px;
+    text-transform: lowercase;
+}
+
+.login-input {
+    width: 100%;
+    background-color: #1e1e2e;
+    border: 2px solid #45475a;
+    color: #cdd6f4;
+    padding: 12px 16px;
+    font-family: "DM Mono", monospace;
+    font-size: 16px;
+    border-radius: 4px;
+    transition: border-color 0.2s ease-out;
+    box-sizing: border-box;
+    position: relative;
+}
+
+.login-input.border-container {
+    border-radius: 0;
+    padding: 20px 16px 12px 16px;
+}
+
+.username-input.border-container::before {
+    content: "username";
+    position: absolute;
+    top: -12px;
+    left: 15px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.password-input.border-container::before {
+    content: "password";
+    position: absolute;
+    top: -12px;
+    left: 15px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.login-input:focus {
+    outline: none;
+    border-color: #89b4fa;
+}
+
+.login-input:focus.border-container::before {
+    color: #89b4fa;
+}
+
+.login-input:hover:not(:focus) {
+    border-color: #6c7086;
+}
+
+.login-input:hover:not(:focus).border-container::before {
+    color: #6c7086;
+}
+
+.login-input::placeholder {
+    color: #6c7086;
+    font-style: italic;
+}
+
+.login-actions {
+    margin-top: 25px;
+}
+
+.login-btn {
+    width: 100%;
+    background-color: #1e1e2e;
+    border: 2px solid #45475a;
+    color: #cdd6f4;
+    padding: 14px 20px;
+    font-family: "DM Mono", monospace;
+    font-size: 16px;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease-out;
+    text-transform: lowercase;
+    position: relative;
+}
+
+.login-btn.border-container {
+    border-radius: 0;
+    padding: 20px 20px 14px 20px;
+}
+
+.login-btn.border-container::before {
+    content: "auth";
+    position: absolute;
+    top: -12px;
+    left: 15px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.login-btn:hover {
+    border-color: #89b4fa;
+    transform: translateY(-1px);
+}
+
+.login-btn:hover.border-container::before {
+    color: #89b4fa;
+}
+
+.login-error {
+    background-color: #1e1e2e;
+    color: #f38ba8;
+    padding: 20px 16px 12px 16px;
+    margin-bottom: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    border: 2px solid #f38ba8;
+    position: relative;
+}
+
+.login-error.border-container::before {
+    content: "error";
+    position: absolute;
+    top: -12px;
+    left: 15px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #f38ba8;
+    transition: color 0.2s ease-out;
+}
+
+.info-section {
+    margin-bottom: 20px;
+}
+
+.credential-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.credential-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+}
+
+.credential-label {
+    color: #bac2de;
+    font-size: 14px;
+}
+
+.credential-value {
+    color: #a6e3a1;
+    font-family: "DM Mono", monospace;
+    font-weight: 500;
+    background-color: #1e1e2e;
+    padding: 4px 8px;
+    border-radius: 3px;
+    border: 1px solid #45475a;
+    position: relative;
+}
+
+.credential-value.border-container {
+    border: 2px solid #45475a;
+    border-radius: 0;
+    padding: 12px 8px 4px 8px;
+    transition: border-color 0.2s ease-out;
+}
+
+.credential-value.border-container:nth-of-type(2)::before {
+    content: "user";
+    position: absolute;
+    top: -10px;
+    left: 5px;
+    background-color: #1e1e2e;
+    padding: 0 4px;
+    font-size: 10px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.credential-value.border-container:nth-of-type(4)::before {
+    content: "pass";
+    position: absolute;
+    top: -10px;
+    left: 5px;
+    background-color: #1e1e2e;
+    padding: 0 4px;
+    font-size: 10px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.credential-value.border-container:hover {
+    border-color: #a6e3a1;
+}
+
+.credential-value.border-container:hover::before {
+    color: #a6e3a1;
+}
+
+.security-note {
+    border-top: 1px solid #45475a;
+    padding-top: 15px;
+}
+
+@media (max-width: 768px) {
+    .login-grid {
+        padding: 20px 15px;
+        gap: 15px;
+    }
+    
+    .login-header,
+    .login-form-section,
+    .login-info {
+        padding: 20px;
+    }
+}
 }
 "#;
 

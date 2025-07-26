@@ -2,7 +2,10 @@ use actix_files as fs;
 use actix_multipart::Multipart;
 use actix_web::{
     get, middleware::Logger, post, web, App, HttpResponse, HttpServer, Result as ActixResult,
+    cookie::Key,
 };
+use actix_session::{SessionMiddleware, storage::CookieSessionStore};
+use actix_identity::IdentityMiddleware;
 #[cfg(feature = "server")]
 use futures_util::TryStreamExt as _;
 use serde::Serialize;
@@ -10,13 +13,17 @@ use std::fs::create_dir_all;
 use std::io::Write;
 use std::path::PathBuf;
 use uuid::Uuid;
-use cratr::{FileInfo, StorageInfo};
+use cratr::{FileInfo, StorageInfo, LoginRequest, LoginResponse, AuthStatus};
 use clap::Parser;
 
 const UPLOAD_DIR: &str = "./uploads";
-const MAX_FILE_SIZE: usize = 256 * 1024 * 1024; // 256 MB
-const MAX_FILE_COUNT: usize = 3;
-const MAX_STORAGE_SIZE: u64 = 50 * 1024 * 1024 * 1024; // 50 GB total storage limit
+const MAX_FILE_SIZE: usize = 16384 * 1024 * 1024; // 16384 MB
+const MAX_FILE_COUNT: usize = 10;
+const MAX_STORAGE_SIZE: u64 = 1024 * 1024 * 1024 * 1024; // 1024 GB total storage limit
+
+// Default credentials - change these in production!
+const DEFAULT_USERNAME: &str = "admin";
+const DEFAULT_PASSWORD: &str = "admin";
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -48,9 +55,73 @@ struct DebugInfo {
     debug_mode: bool,
 }
 
+// Helper function to check if user is authenticated
+fn is_authenticated(session: &actix_session::Session) -> bool {
+    session.get::<String>("username").unwrap_or(None).is_some()
+}
+
+// Login endpoint
+#[post("/login")]
+async fn login(
+    request: web::Json<LoginRequest>,
+    session: actix_session::Session,
+) -> ActixResult<HttpResponse> {
+    // Simple credential check (in production, use proper password hashing)
+    if request.username == DEFAULT_USERNAME && request.password == DEFAULT_PASSWORD {
+        // Store user in session
+        session.insert("username", &request.username)
+            .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Failed to create session: {}", e)))?;
+            
+        Ok(HttpResponse::Ok().json(LoginResponse {
+            success: true,
+            message: "Login successful".to_string(),
+            authenticated: true,
+        }))
+    } else {
+        Ok(HttpResponse::Unauthorized().json(LoginResponse {
+            success: false,
+            message: "Invalid credentials".to_string(),
+            authenticated: false,
+        }))
+    }
+}
+
+// Logout endpoint
+#[post("/logout")]
+async fn logout(session: actix_session::Session) -> ActixResult<HttpResponse> {
+    session.clear();
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "message": "Logged out successfully",
+        "authenticated": false
+    })))
+}
+
+// Check authentication status
+#[get("/auth/status")]
+async fn auth_status(session: actix_session::Session) -> ActixResult<HttpResponse> {
+    let username = session.get::<String>("username").unwrap_or(None);
+    let authenticated = username.is_some();
+    
+    Ok(HttpResponse::Ok().json(AuthStatus {
+        authenticated,
+        username,
+    }))
+}
+
+// Authentication middleware wrapper
+fn require_auth(session: &actix_session::Session) -> ActixResult<()> {
+    if is_authenticated(session) {
+        Ok(())
+    } else {
+        Err(actix_web::error::ErrorUnauthorized("Authentication required"))
+    }
+}
+
 // Get storage information
 #[get("/storage")]
-async fn get_storage_info() -> ActixResult<HttpResponse> {
+async fn get_storage_info(session: actix_session::Session) -> ActixResult<HttpResponse> {
+    require_auth(&session)?;
     let mut total_size = 0u64;
     let mut file_count = 0usize;
 
@@ -110,7 +181,8 @@ async fn get_debug_info(data: web::Data<AppState>) -> ActixResult<HttpResponse> 
 
 // Handle file uploads
 #[post("/upload")]
-async fn upload_files(mut payload: Multipart) -> ActixResult<HttpResponse> {
+async fn upload_files(mut payload: Multipart, session: actix_session::Session) -> ActixResult<HttpResponse> {
+    require_auth(&session)?;
     // Ensure upload directory exists
     create_dir_all(UPLOAD_DIR).map_err(|e| {
         actix_web::error::ErrorInternalServerError(format!("Failed to create upload directory: {}", e))
@@ -191,7 +263,8 @@ async fn upload_files(mut payload: Multipart) -> ActixResult<HttpResponse> {
 
 // List all uploaded files
 #[get("/files")]
-async fn list_files() -> ActixResult<HttpResponse> {
+async fn list_files(session: actix_session::Session) -> ActixResult<HttpResponse> {
+    require_auth(&session)?;
     let mut files = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(UPLOAD_DIR) {
@@ -229,7 +302,8 @@ async fn list_files() -> ActixResult<HttpResponse> {
 
 // Delete a file
 #[post("/delete/{filename}")]
-async fn delete_file(path: web::Path<String>) -> ActixResult<HttpResponse> {
+async fn delete_file(path: web::Path<String>, session: actix_session::Session) -> ActixResult<HttpResponse> {
+    require_auth(&session)?;
     let filename = path.into_inner();
     let filepath = PathBuf::from(UPLOAD_DIR).join(&filename);
 
@@ -397,11 +471,26 @@ async fn main() -> std::io::Result<()> {
     };
 
     HttpServer::new(move || {
+        // Generate a secret key for sessions (in production, use a persistent secret)
+        let secret_key = Key::generate();
+        
         App::new()
             .app_data(web::Data::new(app_state.clone()))
             .wrap(Logger::default())
+            .wrap(
+                SessionMiddleware::builder(
+                    CookieSessionStore::default(),
+                    secret_key,
+                )
+                .cookie_secure(false) // Set to true in production with HTTPS
+                .build(),
+            )
+            .wrap(IdentityMiddleware::default())
             .service(index)
             .service(get_debug_info)
+            .service(login)
+            .service(logout)
+            .service(auth_status)
             .service(upload_files)
             .service(list_files)
             .service(get_storage_info)

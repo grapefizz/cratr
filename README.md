@@ -4,6 +4,7 @@ A simple and secure file upload/download server built with Actix Web and Leptos 
 
 ## Features
 
+- **Secure Authentication**: Login system to protect file access
 - **File Upload**: Upload multiple files with drag-and-drop support
 - **File Download**: Download files with direct links  
 - **File Management**: Delete files through the web interface
@@ -37,23 +38,32 @@ The server will start on `http://127.0.0.1:8080`
 
 You can modify the following constants in `src/main.rs`:
 
-- `MAX_FILE_SIZE`: Maximum file size (default: 256 MB)
-- `MAX_FILE_COUNT`: Maximum files per upload (default: 3)
+- `MAX_FILE_SIZE`: Maximum file size (default: 16 GB)
+- `MAX_FILE_COUNT`: Maximum files per upload (default: 10)
 - `UPLOAD_DIR`: Directory to store uploaded files (default: ./uploads)
+- `DEFAULT_USERNAME`: Default login username (default: "admin")
+- `DEFAULT_PASSWORD`: Default login password (default: "cratr123")
 
 To change the server bind address, modify the `.bind()` call in the main function.
+
+**Security Note**: Change the default username and password in production!
 
 ## API Endpoints
 
 ### Web Interface
 - `GET /` - Main web interface (Leptos WASM frontend)
 
+### Authentication
+- `POST /login` - User login
+- `POST /logout` - User logout
+- `GET /auth/status` - Check authentication status
+
 ### File Operations
-- `POST /upload` - Upload files (multipart/form-data)
-- `GET /files` - List all uploaded files with metadata (JSON)
+- `POST /upload` - Upload files (multipart/form-data) *requires authentication*
+- `GET /files` - List all uploaded files with metadata (JSON) *requires authentication*
 - `GET /download/{filename}` - Download a specific file
-- `POST /delete/{filename}` - Delete a specific file
-- `GET /storage` - Get storage usage information
+- `POST /delete/{filename}` - Delete a specific file *requires authentication*
+- `GET /storage` - Get storage usage information *requires authentication*
 
 ### Example API Usage
 
@@ -84,11 +94,14 @@ curl http://localhost:8080/storage
 
 ## Security Features
 
+- **Session-based authentication** with secure cookie storage
+- **Protected API endpoints** requiring login for file operations
 - Filename sanitization to prevent path traversal attacks
 - UUID prefixes to prevent filename conflicts
 - File size limits to prevent disk space exhaustion
 - File count limits per upload request
 - CORS protection for API endpoints
+- **Default credentials**: admin / cratr123 (change in production!)
 
 ## Architecture
 

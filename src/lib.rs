@@ -45,6 +45,25 @@ pub struct DebugInfo {
     pub debug_mode: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginResponse {
+    pub success: bool,
+    pub message: String,
+    pub authenticated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthStatus {
+    pub authenticated: bool,
+    pub username: Option<String>,
+}
+
 #[cfg(feature = "frontend")]
 pub mod frontend;
 
