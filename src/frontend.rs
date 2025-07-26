@@ -43,24 +43,49 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class="app">
-            <StorageSection storage_info=storage_info />
-            <UploadSection 
-                debug_mode=debug_mode
-                on_upload_complete=move || {
-                    spawn_local(async move {
-                        load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
-                    });
-                }
-            />
-            <FilesSection 
-                files=filtered_files
-                search_term=search_term
-                set_search_term=set_search_term
-                is_loading=is_loading
-                set_files=set_files
-                set_storage_info=set_storage_info
-                set_is_loading=set_is_loading
-            />
+            <StyleProvider />
+            <div class="main-grid">
+                <div class="header-section border-container">
+                    <h1 style="color: #cdd6f4; margin: 0; font-size: 2.5rem; font-weight: 500;">
+                        "cratr " <span class="wave">"👋"</span>
+                    </h1>
+                    <p style="color: #bac2de; font-size: 1.1rem; margin: 10px 0 0 0;">
+                        "drag, drop, and manage your files with style"
+                    </p>
+                </div>
+                
+                <div class="storage-section border-container">
+                    <StorageSection storage_info=storage_info />
+                </div>
+                
+                <div class="upload-section border-container">
+                    <UploadSection 
+                        debug_mode=debug_mode
+                        on_upload_complete=move || {
+                            spawn_local(async move {
+                                load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
+                            });
+                        }
+                    />
+                </div>
+                
+                <div class="search-section border-container">
+                    <SearchSection 
+                        search_term=search_term
+                        set_search_term=set_search_term
+                    />
+                </div>
+                
+                <div class="files-section border-container">
+                    <FilesSection 
+                        files=filtered_files
+                        is_loading=is_loading
+                        set_files=set_files
+                        set_storage_info=set_storage_info
+                        set_is_loading=set_is_loading
+                    />
+                </div>
+            </div>
         </div>
     }
 }
@@ -70,21 +95,70 @@ pub fn StorageSection(
     storage_info: ReadSignal<Option<StorageInfo>>,
 ) -> impl IntoView {
     view! {
-        <div class="storage-info">
-            <Show when=move || storage_info.get().is_some() fallback=|| view! { <div>"Loading storage info..."</div> }>
-                {move || {
-                    if let Some(info) = storage_info.get() {
-                        view! {
-                            <p>
-                                "storage: " {info.formatted_disk_free} " free of " {info.formatted_disk_total} 
-                                " (" {format!("{:.1}%", info.disk_used_percentage)} " used)"
-                            </p>
-                        }.into_view()
-                    } else {
-                        view! { <p></p> }.into_view()
-                    }
-                }}
-            </Show>
+        <Show when=move || storage_info.get().is_some() fallback=|| view! { 
+            <div style="color: #bac2de;">
+                "loading storage info..."
+            </div> 
+        }>
+            {move || {
+                if let Some(info) = storage_info.get() {
+                    view! {
+                        <div>
+                            <div class="storage-stats">
+                                <div class="stat-item">
+                                    "used space"
+                                    <div class="stat-value">{&info.formatted_used}</div>
+                                </div>
+                                <div class="stat-item">
+                                    "total files"
+                                    <div class="stat-value">{info.total_files}</div>
+                                </div>
+                                <div class="stat-item">
+                                    "usage"
+                                    <div class="stat-value">{format!("{:.1}%", info.used_percentage)}</div>
+                                </div>
+                            </div>
+                            
+                            <div class="progress-bar">
+                                <div 
+                                    class="progress-fill"
+                                    style=format!("width: {:.1}%", info.used_percentage.min(100.0))
+                                ></div>
+                            </div>
+                            
+                            <div style="margin-top: 15px; font-size: 14px; color: #a6adc8;">
+                                "disk: " {&info.formatted_disk_free} " free of " {&info.formatted_disk_total}
+                            </div>
+                        </div>
+                    }.into_view()
+                } else {
+                    view! { <div></div> }.into_view()
+                }
+            }}
+        </Show>
+    }
+}
+
+#[component]
+pub fn SearchSection(
+    search_term: ReadSignal<String>,
+    set_search_term: WriteSignal<String>,
+) -> impl IntoView {
+    view! {
+        <div>
+            <input 
+                type="text"
+                class="search-input"
+                placeholder="search files... (#image #video #audio)"
+                prop:value=search_term
+                on:input=move |ev| {
+                    let value = event_target_value(&ev);
+                    set_search_term.set(value);
+                }
+            />
+            <div style="color: #6c7086; font-size: 12px; margin-top: 8px;">
+                "💡 use # to filter by type"
+            </div>
         </div>
     }
 }
@@ -164,22 +238,21 @@ where
     };
 
     view! {
-        <div class="upload-section">
+        <div>
             <form on:submit=on_submit>
-                <div class="file-input-container">
+                <div style="margin-bottom: 15px;">
                     <input
                         type="file"
                         id="fileInput"
                         multiple
                         ref=file_input_ref
                         on:change=on_file_change
-                        class="file-input"
                         accept="*/*"
                         style="display: none;"
                     />
                     <button 
                         type="button"
-                        class="upload-button"
+                        class="choose-files-btn"
                         on:click=on_choose_files_click
                     >
                         "choose files"
@@ -187,32 +260,35 @@ where
                 </div>
                 
                 <Show when=move || !selected_files.get().is_empty()>
-                    <div class="selected-files">
-                        <h4>"selected files:"</h4>
-                        <ul>
+                    <div style="margin-bottom: 15px; text-align: left;">
+                        <div style="color: #bac2de; font-size: 14px; margin-bottom: 8px;">
+                            "selected:"
+                        </div>
+                        <div style="max-height: 80px; overflow-y: auto;">
                             <For
                                 each=move || selected_files.get()
                                 key=|file| file.name()
                                 let:file
                             >
-                                <li>{file.name()}</li>
+                                <div style="color: #a6adc8; font-size: 13px; margin: 2px 0;">
+                                    {file.name()}
+                                </div>
                             </For>
-                        </ul>
+                        </div>
                     </div>
                 </Show>
                 
                 <Show when=move || debug_mode.get()>
-                    <div style="margin: 10px 0; color: #565f89; font-size: 0.8em;">
-                        "Debug: Files selected: " {move || selected_files.get().len()} 
-                        " | Uploading: " {move || if is_uploading.get() { "Yes" } else { "No" }}
-                        " | Button disabled: " {move || if selected_files.get().is_empty() || is_uploading.get() { "Yes" } else { "No" }}
+                    <div style="margin: 10px 0; color: #6c7086; font-size: 12px;">
+                        "debug: " {move || selected_files.get().len()} " files | "
+                        {move || if is_uploading.get() { "uploading..." } else { "ready" }}
                     </div>
                 </Show>
                 
                 <button 
                     type="button"
+                    class="upload-files-btn"
                     disabled=move || selected_files.get().is_empty() || is_uploading.get()
-                    class="upload-button"
                     on:click=on_upload_click
                 >
                     {move || if is_uploading.get() { "uploading..." } else { "upload files" }}
@@ -225,8 +301,6 @@ where
 #[component]
 fn FilesSection(
     files: Memo<Vec<FileInfo>>,
-    search_term: ReadSignal<String>,
-    set_search_term: WriteSignal<String>,
     is_loading: ReadSignal<bool>,
     set_files: WriteSignal<Vec<FileInfo>>,
     set_storage_info: WriteSignal<Option<StorageInfo>>,
@@ -234,170 +308,102 @@ fn FilesSection(
 ) -> impl IntoView 
 {
     view! {
-        <div class="files-section">
-            <div class="search-container">
-                <input 
-                    type="text"
-                    class="search-input"
-                    placeholder="search files... (use #image, #video, #audio, #text, #code, #pdf, #archive, #document to filter by type)"
-                    prop:value=search_term
-                    on:input=move |ev| {
-                        let value = event_target_value(&ev);
-                        set_search_term.set(value);
-                    }
-                />
-                <div class="search-help">"tip: start with # to filter by file type (e.g., #image, #video)"</div>
-            </div>
-            
+        <div>
             <Show 
                 when=move || is_loading.get()
                 fallback=move || {
                     view! {
-                        <div class="files-grid">
+                        <div>
                             <Show
                                 when=move || !files.get().is_empty()
                                 fallback=move || {
-                                    let search_value = search_term.get();
-                                    let search = search_value.trim();
-                                    let (message, sub_message) = if search.is_empty() {
-                                        ("no files uploaded yet", "upload some files to get started!")
-                                    } else {
-                                        ("no files found matching search", "try a different search term or upload some files!")
-                                    };
                                     view! {
-                                        <div class="empty-state">
-                                            <h3>{message}</h3>
-                                            <p>{sub_message}</p>
+                                        <div style="
+                                            text-align: center;
+                                            padding: 40px 20px;
+                                            color: #bac2de;
+                                        ">
+                                            <div style="font-size: 32px; margin-bottom: 10px;">"📁"</div>
+                                            <div>"no files uploaded yet"</div>
+                                            <div style="color: #6c7086; font-size: 14px; margin-top: 5px;">
+                                                "upload some files to get started"
+                                            </div>
                                         </div>
                                     }
                                 }
                             >
-                                <For
-                                    each=move || files.get()
-                                    key=|file| file.path.clone()
-                                    let:file
-                                >
-                                    <FileCard 
-                                        file=file
-                                        set_files=set_files
-                                        set_storage_info=set_storage_info
-                                        set_is_loading=set_is_loading
-                                    />
-                                </For>
+                                <div class="files-grid">
+                                    <For
+                                        each=move || files.get()
+                                        key=|file| file.path.clone()
+                                        let:file
+                                    >
+                                        <div class="file-item">
+                                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 10px;">
+                                                <div style="color: #cdd6f4; font-weight: 500; word-break: break-word;">
+                                                    {&file.name}
+                                                </div>
+                                                <span 
+                                                    class="file-type-badge"
+                                                    style=format!("
+                                                        color: {};
+                                                        border-color: {};
+                                                    ", 
+                                                        get_file_type_color(&file.file_type),
+                                                        get_file_type_color(&file.file_type)
+                                                    )
+                                                >
+                                                    {&file.file_type}
+                                                </span>
+                                            </div>
+                                            
+                                            <div style="color: #a6adc8; margin-bottom: 15px; font-size: 14px;">
+                                                "size: " {format_file_size(file.size)}
+                                            </div>
+                                            
+                                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                                <a 
+                                                    href=format!("/download/{}", file.path)
+                                                    class="action-btn"
+                                                    download
+                                                >
+                                                    "download"
+                                                </a>
+                                                
+                                                <button
+                                                    class="action-btn delete-btn"
+                                                    on:click={
+                                                        let file_path = file.path.clone();
+                                                        move |_| {
+                                                            let file_path = file_path.clone();
+                                                            spawn_local(async move {
+                                                                match Request::post(&format!("/delete/{}", file_path)).send().await {
+                                                                    Ok(_) => {
+                                                                        spawn_local(async move {
+                                                                            load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
+                                                                        });
+                                                                    }
+                                                                    Err(e) => {
+                                                                        web_sys::console::log_1(&format!("Delete failed: {}", e).into());
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
+                                                    }
+                                                >
+                                                    "delete"
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </For>
+                                </div>
                             </Show>
                         </div>
                     }
                 }
             >
-                <div class="loading">"loading files..."</div>
-            </Show>
-        </div>
-    }
-}
-
-#[component]
-fn FileCard(
-    file: FileInfo,
-    set_files: WriteSignal<Vec<FileInfo>>,
-    set_storage_info: WriteSignal<Option<StorageInfo>>,
-    set_is_loading: WriteSignal<bool>,
-) -> impl IntoView 
-{
-    let (preview_content, set_preview_content) = create_signal(None::<String>);
-    let (show_preview, set_show_preview) = create_signal(false);
-
-    let on_preview = {
-        let file_path = file.path.clone();
-        let file_name = file.name.clone();
-        move |_| {
-            if file.can_preview {
-                let file_path = file_path.clone();
-                spawn_local(async move {
-                    let response = Request::get(&format!("/preview/{}", &file_path))
-                        .send()
-                        .await;
-                    
-                    if let Ok(resp) = response {
-                        if let Ok(preview) = resp.json::<PreviewResponse>().await {
-                            if let Some(content) = preview.content {
-                                set_preview_content.set(Some(content));
-                                set_show_preview.set(true);
-                            } else {
-                                set_preview_content.set(Some("preview not available".to_string()));
-                                set_show_preview.set(true);
-                            }
-                        }
-                    }
-                });
-            } else {
-                set_preview_content.set(Some("preview not available".to_string()));
-                set_show_preview.set(true);
-            }
-        }
-    };
-
-    let delete_file = {
-        let file_path = file.path.clone();
-        move |_| {
-            if web_sys::window()
-                .and_then(|w| w.confirm_with_message("are you sure you want to delete this file?").ok())
-                .unwrap_or(false)
-            {
-                let file_path = file_path.clone();
-                spawn_local(async move {
-                    if let Ok(_) = delete_file_api(&file_path).await {
-                        load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
-                    }
-                });
-            }
-        }
-    };
-
-    view! {
-        <div class="file-card">
-            <div class="file-icon" data-type=&file.file_type></div>
-            <div class="file-info">
-                <div class="file-name" title=&file.name>{&file.name}</div>
-                <div class="file-meta">
-                    <span class="file-size">{format_file_size(file.size)}</span>
-                    <span class="file-type">{&file.file_type}</span>
-                </div>
-            </div>
-            <div class="file-actions">
-                <button 
-                    class="action-button preview-button" 
-                    on:click=on_preview
-                    disabled=move || !file.can_preview
-                >
-                    "👁"
-                </button>
-                <a href=&format!("/download/{}", &file.path) download=&file.name class="action-button download-button">
-                    "⬇"
-                </a>
-                <button class="action-button delete-button" on:click=delete_file>
-                    "🗑"
-                </button>
-            </div>
-            
-            <Show when=move || show_preview.get()>
-                <div class="preview-modal" on:click=move |_| set_show_preview.set(false)>
-                    <div class="preview-content" on:click=|e| e.stop_propagation()>
-                        <div class="preview-header">
-                            <h3>{&file.name}</h3>
-                            <button class="close-button" on:click=move |_| set_show_preview.set(false)>
-                                "×"
-                            </button>
-                        </div>
-                        <div class="preview-body">
-                            {move || {
-                                if let Some(content) = preview_content.get() {
-                                    view! { <pre>{content}</pre> }.into_view()
-                                } else {
-                                    view! { <pre>"loading..."</pre> }.into_view()
-                                }
-                            }}
-                        </div>
-                    </div>
+                <div style="text-align: center; color: #bac2de; padding: 20px;">
+                    "loading files..."
                 </div>
             </Show>
         </div>
@@ -504,8 +510,361 @@ fn format_file_size(size: u64) -> String {
     }
 }
 
+fn get_file_type_color(file_type: &str) -> &'static str {
+    match file_type {
+        "image" => "#a6e3a1",  // Catppuccin green
+        "video" => "#f38ba8",  // Catppuccin pink  
+        "audio" => "#cba6f7",  // Catppuccin mauve
+        "text" | "code" => "#89b4fa", // Catppuccin blue
+        "pdf" => "#fab387",    // Catppuccin peach
+        "archive" => "#f9e2af", // Catppuccin yellow
+        _ => "#6c7086"         // Catppuccin overlay1
+    }
+}
+
 #[wasm_bindgen]
 pub fn run() {
     console_error_panic_hook::set_once();
     mount_to_body(|| view! { <App /> });
+}
+
+// CSS-in-Rust: Define styles as const strings with Catppuccin Mocha and grid design
+const MAIN_STYLES: &str = r#"
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500&display=swap");
+
+body {
+    font-family: "DM Mono", monospace;
+    letter-spacing: -0.05ch;
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    user-select: none;
+    margin: 0;
+    padding: 20px;
+}
+
+.app {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.main-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: auto auto auto auto;
+    gap: 20px;
+    margin: 20px 0;
+}
+
+.border-container {
+    position: relative;
+    padding: 20px;
+    border: 2px solid #45475a;
+    transition: border-color 0.2s ease-out;
+    text-align: center;
+    background-color: #1e1e2e;
+}
+
+.border-container::before {
+    position: absolute;
+    top: -12px;
+    left: 20px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 16px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.header-section {
+    grid-column: 1 / span 6;
+    grid-row: 1;
+}
+.header-section::before {
+    content: "file upload system";
+}
+.header-section:hover {
+    border-color: #cba6f7;
+}
+.header-section:hover::before {
+    color: #cba6f7;
+}
+
+.storage-section {
+    grid-column: 1 / span 3;
+    grid-row: 2;
+}
+.storage-section::before {
+    content: "storage info";
+}
+.storage-section:hover {
+    border-color: #89b4fa;
+}
+.storage-section:hover::before {
+    color: #89b4fa;
+}
+
+.upload-section {
+    grid-column: 4 / span 3;
+    grid-row: 2;
+}
+.upload-section::before {
+    content: "upload files";
+}
+.upload-section:hover {
+    border-color: #a6e3a1;
+}
+.upload-section:hover::before {
+    color: #a6e3a1;
+}
+
+.search-section {
+    grid-column: 1 / span 2;
+    grid-row: 3;
+}
+.search-section::before {
+    content: "search";
+}
+.search-section:hover {
+    border-color: #fab387;
+}
+.search-section:hover::before {
+    color: #fab387;
+}
+
+.files-section {
+    grid-column: 1 / span 6;
+    grid-row: 4;
+}
+.files-section::before {
+    content: "files";
+}
+.files-section:hover {
+    border-color: #f38ba8;
+}
+.files-section:hover::before {
+    color: #f38ba8;
+}
+
+.choose-files-btn, .upload-files-btn {
+    background-color: #11111b;
+    border: 2px solid #45475a;
+    color: #cdd6f4;
+    padding: 10px 20px;
+    cursor: pointer;
+    font-family: "DM Mono", monospace;
+    font-size: 16px;
+    transition: border-color 0.2s ease-out;
+    position: relative;
+    margin: 5px;
+}
+
+.choose-files-btn::before {
+    content: "choose";
+    position: absolute;
+    top: -12px;
+    left: 10px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 14px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.upload-files-btn::before {
+    content: "upload";
+    position: absolute;
+    top: -12px;
+    left: 10px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 14px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.choose-files-btn:hover, .upload-files-btn:hover:not(:disabled) {
+    border-color: #a6e3a1;
+}
+
+.choose-files-btn:hover::before, .upload-files-btn:hover:not(:disabled)::before {
+    color: #a6e3a1;
+}
+
+.upload-files-btn:disabled {
+    border-color: #313244;
+    color: #6c7086;
+    cursor: not-allowed;
+}
+
+.upload-files-btn:disabled::before {
+    color: #313244;
+}
+
+.file-item {
+    background-color: #1e1e2e;
+    border: 2px solid #45475a;
+    padding: 15px;
+    margin: 10px 0;
+    transition: border-color 0.2s ease-out;
+    position: relative;
+}
+
+.file-item::before {
+    content: "file";
+    position: absolute;
+    top: -12px;
+    left: 20px;
+    background-color: #1e1e2e;
+    padding: 0 8px;
+    font-size: 14px;
+    color: #45475a;
+    transition: color 0.2s ease-out;
+}
+
+.file-item:hover {
+    border-color: #f38ba8;
+}
+
+.file-item:hover::before {
+    color: #f38ba8;
+}
+
+.search-input {
+    background-color: #11111b;
+    border: 2px solid #45475a;
+    color: #cdd6f4;
+    padding: 10px 15px;
+    font-family: "DM Mono", monospace;
+    font-size: 16px;
+    width: 100%;
+    transition: border-color 0.2s ease-out;
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: #fab387;
+}
+
+.search-input::placeholder {
+    color: #6c7086;
+}
+
+.files-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.action-btn {
+    background-color: #11111b;
+    border: 2px solid #45475a;
+    color: #cdd6f4;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-family: "DM Mono", monospace;
+    font-size: 14px;
+    transition: border-color 0.2s ease-out;
+    margin: 2px;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.action-btn:hover {
+    border-color: #89b4fa;
+    color: #cdd6f4;
+    text-decoration: none;
+}
+
+.delete-btn {
+    border-color: #45475a;
+}
+
+.delete-btn:hover {
+    border-color: #f38ba8;
+}
+
+.storage-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 15px;
+    margin: 15px 0;
+    text-align: left;
+}
+
+.stat-item {
+    color: #bac2de;
+    font-size: 14px;
+}
+
+.stat-value {
+    color: #cdd6f4;
+    font-weight: 500;
+    font-size: 16px;
+}
+
+.progress-bar {
+    width: 100%;
+    background-color: #313244;
+    height: 8px;
+    margin: 10px 0;
+}
+
+.progress-fill {
+    height: 100%;
+    background-color: #89b4fa;
+    transition: width 0.75s ease;
+}
+
+.file-type-badge {
+    font-size: 12px;
+    padding: 2px 6px;
+    border: 1px solid;
+    text-transform: uppercase;
+    font-weight: 500;
+}
+
+.wave {
+    animation-name: wave-animation;
+    animation-duration: 2.5s;
+    animation-iteration-count: infinite;
+    transform-origin: 70% 70%;
+    display: inline-block;
+}
+
+@keyframes wave-animation {
+    0% { transform: rotate(0deg); }
+    10% { transform: rotate(14deg); }
+    20% { transform: rotate(-8deg); }
+    30% { transform: rotate(14deg); }
+    40% { transform: rotate(-4deg); }
+    50% { transform: rotate(10deg); }
+    60% { transform: rotate(0deg); }
+    100% { transform: rotate(0deg); }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+    }
+    
+    .header-section, .storage-section, .upload-section, 
+    .search-section, .files-section {
+        grid-column: 1;
+    }
+    
+    .files-grid {
+        grid-template-columns: 1fr;
+    }
+}
+"#;
+
+// CSS-in-Rust: Component that injects styles
+#[component]
+fn StyleProvider() -> impl IntoView {
+    view! {
+        <style>{MAIN_STYLES}</style>
+    }
 }
