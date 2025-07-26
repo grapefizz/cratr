@@ -11,11 +11,25 @@ use std::io::Write;
 use std::path::PathBuf;
 use uuid::Uuid;
 use cratr::{FileInfo, StorageInfo};
+use clap::Parser;
 
 const UPLOAD_DIR: &str = "./uploads";
 const MAX_FILE_SIZE: usize = 256 * 1024 * 1024; // 256 MB
 const MAX_FILE_COUNT: usize = 3;
 const MAX_STORAGE_SIZE: u64 = 50 * 1024 * 1024 * 1024; // 50 GB total storage limit
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Enable debug mode
+    #[arg(long)]
+    debug: bool,
+}
+
+#[derive(Clone)]
+struct AppState {
+    debug_mode: bool,
+}
 
 #[derive(Serialize)]
 struct UploadResponse {
@@ -27,6 +41,11 @@ struct UploadResponse {
 #[derive(Serialize)]
 struct FileListResponse {
     files: Vec<FileInfo>,
+}
+
+#[derive(Serialize)]
+struct DebugInfo {
+    debug_mode: bool,
 }
 
 // Get storage information
@@ -79,6 +98,14 @@ async fn get_storage_info() -> ActixResult<HttpResponse> {
 async fn index() -> ActixResult<HttpResponse> {
     let html = include_str!("../static/index.html");
     Ok(HttpResponse::Ok().content_type("text/html").body(html))
+}
+
+// Get debug configuration
+#[get("/debug")]
+async fn get_debug_info(data: web::Data<AppState>) -> ActixResult<HttpResponse> {
+    Ok(HttpResponse::Ok().json(DebugInfo {
+        debug_mode: data.debug_mode,
+    }))
 }
 
 // Handle file uploads
@@ -351,6 +378,8 @@ fn get_file_type_and_preview(filename: &str) -> (String, bool) {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let args = Args::parse();
+    
     env_logger::init();
 
     // Create uploads directory if it doesn't exist
@@ -358,11 +387,21 @@ async fn main() -> std::io::Result<()> {
 
     println!("Starting file server at http://127.0.0.1:8080");
     println!("Upload directory: {}", UPLOAD_DIR);
+    
+    if args.debug {
+        println!("Debug mode enabled");
+    }
 
-    HttpServer::new(|| {
+    let app_state = AppState {
+        debug_mode: args.debug,
+    };
+
+    HttpServer::new(move || {
         App::new()
+            .app_data(web::Data::new(app_state.clone()))
             .wrap(Logger::default())
             .service(index)
+            .service(get_debug_info)
             .service(upload_files)
             .service(list_files)
             .service(get_storage_info)

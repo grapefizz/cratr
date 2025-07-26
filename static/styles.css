@@ -211,39 +211,15 @@ body {
     margin-bottom: 15px;
 }
 
-.file-input-wrapper {
-    position: relative;
-    display: inline-block;
-    cursor: pointer;
+.file-input-container {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    margin-bottom: 15px;
 }
 
 .file-input {
-    position: absolute;
-    opacity: 0;
-    width: 100%;
-    height: 100%;
-    cursor: pointer;
-}
-
-.file-input-button {
-    background-color: var(--bg);
-    color: var(--text);
-    padding: 10px 20px;
-    border: 2px solid var(--border);
-    cursor: pointer;
-    font-size: 0.9em;
-    font-family: inherit;
-    font-weight: 400;
-    letter-spacing: -0.05ch;
-    transition: border-color 0.2s ease-out;
-    display: inline-block;
-    min-width: 140px;
-    text-align: center;
-}
-
-.file-input-button:hover {
-    border-color: var(--blue);
-    transition: border-color 0.2s ease-in;
+    display: none;
 }
 
 .upload-button {
@@ -666,14 +642,6 @@ body {
         flex-direction: column;
         align-items: stretch;
         gap: 15px;
-    }
-
-    .file-input-wrapper {
-        width: 100%;
-    }
-
-    .file-input-button {
-        width: 100%;
     }
 
     .upload-button {

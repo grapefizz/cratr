@@ -4,7 +4,7 @@ use gloo_net::http::Request;
 use gloo_file::{FileList, File};
 use web_sys::{Event, FormData};
 
-use crate::{FileInfo, FilesResponse, StorageInfo, ApiResponse, PreviewResponse};
+use crate::{FileInfo, FilesResponse, StorageInfo, ApiResponse, PreviewResponse, DebugInfo};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -12,11 +12,13 @@ pub fn App() -> impl IntoView {
     let (storage_info, set_storage_info) = create_signal(None::<StorageInfo>);
     let (search_term, set_search_term) = create_signal(String::new());
     let (is_loading, set_is_loading) = create_signal(false);
+    let (debug_mode, set_debug_mode) = create_signal(false);
 
-    // Load files when component mounts
+    // Load initial data when component mounts
     create_effect(move |_| {
         spawn_local(async move {
             load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
+            load_debug_info(set_debug_mode).await;
         });
     });
 
@@ -43,6 +45,7 @@ pub fn App() -> impl IntoView {
         <div class="app">
             <StorageSection storage_info=storage_info />
             <UploadSection 
+                debug_mode=debug_mode
                 on_upload_complete=move || {
                     spawn_local(async move {
                         load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
@@ -88,6 +91,7 @@ pub fn StorageSection(
 
 #[component]
 pub fn UploadSection<F>(
+    debug_mode: ReadSignal<bool>,
     on_upload_complete: F,
 ) -> impl IntoView 
 where
@@ -110,6 +114,12 @@ where
             }
         } else {
             web_sys::console::log_1(&"Input ref not found".into());
+        }
+    };
+
+    let on_choose_files_click = move |_| {
+        if let Some(input) = file_input_ref.get_untracked() {
+            input.click();
         }
     };
 
@@ -165,10 +175,15 @@ where
                         on:change=on_file_change
                         class="file-input"
                         accept="*/*"
+                        style="display: none;"
                     />
-                    <label for="fileInput" class="file-input-label">
-                        "choose files to upload"
-                    </label>
+                    <button 
+                        type="button"
+                        class="upload-button"
+                        on:click=on_choose_files_click
+                    >
+                        "choose files"
+                    </button>
                 </div>
                 
                 <Show when=move || !selected_files.get().is_empty()>
@@ -186,11 +201,13 @@ where
                     </div>
                 </Show>
                 
-                <div style="margin: 10px 0; color: #565f89; font-size: 0.8em;">
-                    "Debug: Files selected: " {move || selected_files.get().len()} 
-                    " | Uploading: " {move || if is_uploading.get() { "Yes" } else { "No" }}
-                    " | Button disabled: " {move || if selected_files.get().is_empty() || is_uploading.get() { "Yes" } else { "No" }}
-                </div>
+                <Show when=move || debug_mode.get()>
+                    <div style="margin: 10px 0; color: #565f89; font-size: 0.8em;">
+                        "Debug: Files selected: " {move || selected_files.get().len()} 
+                        " | Uploading: " {move || if is_uploading.get() { "Yes" } else { "No" }}
+                        " | Button disabled: " {move || if selected_files.get().is_empty() || is_uploading.get() { "Yes" } else { "No" }}
+                    </div>
+                </Show>
                 
                 <button 
                     type="button"
@@ -384,6 +401,20 @@ fn FileCard(
                 </div>
             </Show>
         </div>
+    }
+}
+
+async fn load_debug_info(set_debug_mode: WriteSignal<bool>) {
+    match Request::get("/debug").send().await {
+        Ok(response) => {
+            if let Ok(debug_info) = response.json::<DebugInfo>().await {
+                set_debug_mode.set(debug_info.debug_mode);
+            }
+        },
+        Err(_) => {
+            // Default to false if we can't get debug info
+            set_debug_mode.set(false);
+        }
     }
 }
 

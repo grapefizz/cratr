@@ -40,6 +40,11 @@ pub struct PreviewResponse {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugInfo {
+    pub debug_mode: bool,
+}
+
 #[cfg(feature = "frontend")]
 pub mod frontend;
 
