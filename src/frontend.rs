@@ -839,7 +839,6 @@ pub fn run() {
     mount_to_body(|| view! { <App /> });
 }
 
-// CSS-in-Rust: Define styles as const strings with Catppuccin Mocha and grid design
 const MAIN_STYLES: &str = r#"
 @import url("https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500&display=swap");
 
