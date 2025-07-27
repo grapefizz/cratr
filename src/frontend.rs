@@ -3,9 +3,9 @@ use wasm_bindgen::prelude::*;
 use gloo_net::http::Request;
 use gloo_file::{FileList, File};
 use gloo_timers::future::TimeoutFuture;
-use web_sys::{Event, FormData};
+use web_sys::{Event, FormData, RequestCredentials};
 
-use crate::{FileInfo, FilesResponse, StorageInfo, ApiResponse, DebugInfo, LoginRequest, LoginResponse, AuthStatus};
+use crate::{FileInfo, FilesResponse, StorageInfo, ApiResponse, UploadResponse, DebugInfo, LoginRequest, LoginResponse, AuthStatus};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -343,18 +343,32 @@ where
         }
     };
 
-    let on_choose_files_click = move |_| {
+    let on_choose_files_click = move |e: web_sys::MouseEvent| {
+        e.prevent_default();
+        e.stop_propagation();
+        web_sys::console::log_1(&"Choose files button clicked".into());
         if let Some(input) = file_input_ref.get_untracked() {
+            web_sys::console::log_1(&"Triggering file input click".into());
             input.click();
+        } else {
+            web_sys::console::log_1(&"File input ref not found".into());
         }
     };
 
-    let on_upload_click = move |_| {
+    let on_upload_click = move |e: web_sys::MouseEvent| {
+        e.prevent_default();
+        e.stop_propagation();
+        
         let files = selected_files.get();
         web_sys::console::log_1(&format!("Upload button clicked, files count: {}", files.len()).into());
         
         if files.is_empty() {
             web_sys::console::log_1(&"No files selected".into());
+            return;
+        }
+            
+        if is_uploading.get() {
+            web_sys::console::log_1(&"Upload already in progress, ignoring click".into());
             return;
         }
         
@@ -365,21 +379,28 @@ where
             web_sys::console::log_1(&"In spawn_local...".into());
             match upload_files(files).await {
                 Ok(response) => {
-                    web_sys::console::log_1(&format!("Upload successful: {:?}", response.message).into());
+                    web_sys::console::log_1(&format!("Upload successful: {} (uploaded {} files)", response.message, response.files.len()).into());
+                    
+                    // Clear the upload state first
                     set_selected_files.set(Vec::new());
                     if let Some(input) = file_input_ref.get_untracked() {
                         input.set_value("");
                     }
-                    // Call the callback to refresh the file list
-                    web_sys::console::log_1(&"Calling upload complete callback...".into());
+                    set_is_uploading.set(false);
+                    
+                    // Add a longer delay before calling the completion callback to ensure all state is settled
+                    gloo_timers::future::TimeoutFuture::new(100).await;
+                    
+                    // Call the callback to refresh data
+                    web_sys::console::log_1(&"Calling upload complete callback after successful upload".into());
                     on_upload_complete();
                 },
                 Err(e) => {
                     web_sys::console::log_1(&format!("Upload failed: {}", e).into());
                     log::error!("Upload failed: {}", e);
+                    set_is_uploading.set(false);
                 }
             }
-            set_is_uploading.set(false);
         });
     };
 
@@ -552,7 +573,9 @@ fn FileItem(
                             e.prevent_default();
                             let file_path = file_path_delete.clone();
                             spawn_local(async move {
-                                match Request::post(&format!("/delete/{}", file_path)).send().await {
+                                match Request::post(&format!("/delete/{}", file_path))
+                                    .credentials(RequestCredentials::Include)
+                                    .send().await {
                                     Ok(_) => {
                                         spawn_local(async move {
                                             load_files_and_storage(set_files, set_storage_info, set_is_loading).await;
@@ -635,7 +658,7 @@ fn FilesSection(
 }
 
 async fn load_debug_info(set_debug_mode: WriteSignal<bool>) {
-    match Request::get("/debug").send().await {
+    match Request::get("/debug").credentials(RequestCredentials::Include).send().await {
         Ok(response) => {
             if let Ok(debug_info) = response.json::<DebugInfo>().await {
                 set_debug_mode.set(debug_info.debug_mode);
@@ -659,7 +682,7 @@ async fn load_files_and_storage(
     // Make requests individually with better error handling
     let files_result = async {
         web_sys::console::log_1(&"Requesting files...".into());
-        match Request::get("/files").send().await {
+        match Request::get("/files").credentials(RequestCredentials::Include).send().await {
             Ok(response) => {
                 if response.status() == 200 {
                     response.json::<FilesResponse>().await.map_err(|e| format!("Failed to parse files response: {:?}", e))
@@ -673,7 +696,7 @@ async fn load_files_and_storage(
     
     let storage_result = async {
         web_sys::console::log_1(&"Requesting storage info...".into());
-        match Request::get("/storage").send().await {
+        match Request::get("/storage").credentials(RequestCredentials::Include).send().await {
             Ok(response) => {
                 if response.status() == 200 {
                     response.json::<StorageInfo>().await.map_err(|e| format!("Failed to parse storage response: {:?}", e))
@@ -712,27 +735,74 @@ async fn load_files_and_storage(
     web_sys::console::log_1(&"Finished loading files and storage".into());
 }
 
-async fn upload_files(files: Vec<File>) -> Result<ApiResponse, String> {
-    let form_data = FormData::new().map_err(|_| "Failed to create FormData")?;
+async fn upload_files(files: Vec<File>) -> Result<UploadResponse, String> {
+    web_sys::console::log_1(&format!("Starting upload of {} files", files.len()).into());
     
-    for file in files {
+    let form_data = FormData::new().map_err(|e| format!("Failed to create FormData: {:?}", e))?;
+    
+    for (i, file) in files.iter().enumerate() {
+        web_sys::console::log_1(&format!("Adding file {}: {} ({} bytes)", i, file.name(), file.size()).into());
         form_data.append_with_blob("files", &file.as_ref())
-            .map_err(|_| "Failed to append file to FormData")?;
+            .map_err(|e| format!("Failed to append file '{}' to FormData: {:?}", file.name(), e))?;
     }
     
+    web_sys::console::log_1(&"FormData created successfully, sending request...".into());
+    
+    // Log request details
+    web_sys::console::log_1(&"Request details:".into());
+    web_sys::console::log_1(&"- URL: /upload".into());
+    web_sys::console::log_1(&"- Method: POST".into());
+    web_sys::console::log_1(&"- Credentials: Include".into());
+    
     let response = Request::post("/upload")
+        .credentials(RequestCredentials::Include)
         .body(form_data)
         .map_err(|e| format!("Failed to set body: {:?}", e))?
         .send()
         .await
         .map_err(|e| format!("Request failed: {:?}", e))?;
         
-    response.json::<ApiResponse>().await
-        .map_err(|e| format!("Failed to parse response: {:?}", e))
+    web_sys::console::log_1(&format!("Response received with status: {}", response.status()).into());
+    web_sys::console::log_1(&format!("Response status text: {:?}", response.status_text()).into());
+    web_sys::console::log_1(&format!("Response ok: {}", response.ok()).into());
+    
+    // Check response headers
+    if let Ok(headers) = response.headers().entries() {
+        web_sys::console::log_1(&"Response headers:".into());
+        for header in headers {
+            if let Ok(header_array) = header {
+                if let (Some(key), Some(value)) = (header_array.get(0), header_array.get(1)) {
+                    if let (Ok(key_str), Ok(value_str)) = (key.as_string(), value.as_string()) {
+                        web_sys::console::log_1(&format!("  {}: {}", key_str, value_str).into());
+                    }
+                }
+            }
+        }
+    }
+    
+    if response.status() == 200 {
+        let response_text = response.text().await.map_err(|e| format!("Failed to get response text: {:?}", e))?;
+        web_sys::console::log_1(&format!("Response text length: {} chars", response_text.len()).into());
+        
+        if response_text.is_empty() {
+            web_sys::console::log_1(&"ERROR: Server returned empty response".into());
+            return Err("Server returned empty response".to_string());
+        }
+        
+        web_sys::console::log_1(&format!("Response text: {}", response_text).into());
+        
+        serde_json::from_str::<UploadResponse>(&response_text)
+            .map_err(|e| format!("Failed to parse response JSON: {:?} - Response was: '{}'", e, response_text))
+    } else {
+        let error_text = response.text().await.unwrap_or_default();
+        web_sys::console::log_1(&format!("Error response (status {}): {}", response.status(), error_text).into());
+        Err(format!("Upload failed with status: {} - {}", response.status(), error_text))
+    }
 }
 
 async fn delete_file_api(filename: &str) -> Result<ApiResponse, String> {
     let response = Request::post(&format!("/delete/{}", filename))
+        .credentials(RequestCredentials::Include)
         .send()
         .await
         .map_err(|e| format!("Request failed: {:?}", e))?;
@@ -743,7 +813,7 @@ async fn delete_file_api(filename: &str) -> Result<ApiResponse, String> {
 
 async fn check_auth_status(set_is_authenticated: WriteSignal<bool>) {
     web_sys::console::log_1(&"Checking authentication status...".into());
-    match Request::get("/auth/status").send().await {
+    match Request::get("/auth/status").credentials(RequestCredentials::Include).send().await {
         Ok(response) => {
             if response.status() == 200 {
                 match response.json::<AuthStatus>().await {
@@ -779,6 +849,7 @@ async fn login_user(username: &str, password: &str) -> Result<LoginResponse, Str
     
     let response = Request::post("/login")
         .header("Content-Type", "application/json")
+        .credentials(RequestCredentials::Include)
         .body(request_body)
         .map_err(|e| format!("Request body error: {:?}", e))?
         .send()
@@ -790,7 +861,7 @@ async fn login_user(username: &str, password: &str) -> Result<LoginResponse, Str
 }
 
 async fn logout_user(set_is_authenticated: WriteSignal<bool>) {
-    match Request::post("/logout").send().await {
+    match Request::post("/logout").credentials(RequestCredentials::Include).send().await {
         Ok(_) => {
             set_is_authenticated.set(false);
         }

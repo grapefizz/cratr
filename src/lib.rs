@@ -35,6 +35,13 @@ pub struct ApiResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadResponse {
+    pub success: bool,
+    pub message: String,
+    pub files: Vec<FileInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreviewResponse {
     pub content: Option<String>,
     pub error: Option<String>,

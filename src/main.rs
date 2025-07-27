@@ -66,11 +66,28 @@ async fn login(
     request: web::Json<LoginRequest>,
     session: actix_session::Session,
 ) -> ActixResult<HttpResponse> {
+    println!("=== LOGIN REQUEST ===");
+    println!("Username: {}", request.username);
+    
     // Simple credential check (in production, use proper password hashing)
     if request.username == DEFAULT_USERNAME && request.password == DEFAULT_PASSWORD {
         // Store user in session
-        session.insert("username", &request.username)
-            .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Failed to create session: {}", e)))?;
+        match session.insert("username", &request.username) {
+            Ok(_) => {
+                println!("Successfully stored username in session");
+                
+                // Verify it was stored
+                if let Ok(Some(stored_username)) = session.get::<String>("username") {
+                    println!("Verified stored username: {}", stored_username);
+                } else {
+                    println!("WARNING: Could not retrieve username after storing it");
+                }
+            },
+            Err(e) => {
+                println!("Failed to store username in session: {}", e);
+                return Err(actix_web::error::ErrorInternalServerError(format!("Failed to create session: {}", e)));
+            }
+        }
             
         Ok(HttpResponse::Ok().json(LoginResponse {
             success: true,
@@ -78,6 +95,7 @@ async fn login(
             authenticated: true,
         }))
     } else {
+        println!("Invalid credentials provided");
         Ok(HttpResponse::Unauthorized().json(LoginResponse {
             success: false,
             message: "Invalid credentials".to_string(),
@@ -100,8 +118,13 @@ async fn logout(session: actix_session::Session) -> ActixResult<HttpResponse> {
 // Check authentication status
 #[get("/auth/status")]
 async fn auth_status(session: actix_session::Session) -> ActixResult<HttpResponse> {
+    println!("=== AUTH STATUS REQUEST ===");
+    
     let username = session.get::<String>("username").unwrap_or(None);
     let authenticated = username.is_some();
+    
+    println!("Username in session: {:?}", username);
+    println!("Authenticated: {}", authenticated);
     
     Ok(HttpResponse::Ok().json(AuthStatus {
         authenticated,
@@ -121,6 +144,7 @@ fn require_auth(session: &actix_session::Session) -> ActixResult<()> {
 // Get storage information
 #[get("/storage")]
 async fn get_storage_info(session: actix_session::Session) -> ActixResult<HttpResponse> {
+    println!("=== STORAGE REQUEST RECEIVED ===");
     require_auth(&session)?;
     let mut total_size = 0u64;
     let mut file_count = 0usize;
@@ -182,20 +206,45 @@ async fn get_debug_info(data: web::Data<AppState>) -> ActixResult<HttpResponse> 
 // Handle file uploads
 #[post("/upload")]
 async fn upload_files(mut payload: Multipart, session: actix_session::Session) -> ActixResult<HttpResponse> {
-    require_auth(&session)?;
+    println!("=== UPLOAD REQUEST RECEIVED ===");
+    
+    // Log session info for debugging
+    if let Ok(username) = session.get::<String>("username") {
+        println!("Session username: {:?}", username);
+    } else {
+        println!("No username in session");
+    }
+    
+    // Check authentication first
+    match require_auth(&session) {
+        Ok(_) => println!("Authentication successful"),
+        Err(e) => {
+            println!("Authentication failed: {:?}", e);
+            return Err(e);
+        }
+    }
+    
+    println!("Upload request received - authentication passed");
+    
     // Ensure upload directory exists
     create_dir_all(UPLOAD_DIR).map_err(|e| {
+        println!("Failed to create upload directory: {}", e);
         actix_web::error::ErrorInternalServerError(format!("Failed to create upload directory: {}", e))
     })?;
 
     let mut uploaded_files = Vec::new();
     let mut file_count = 0;
 
+    println!("Starting to process multipart payload...");
     while let Some(mut field) = payload.try_next().await? {
+        println!("Processing field...");
         let content_disposition = field.content_disposition();
         
         if let Some(filename) = content_disposition.and_then(|cd| cd.get_filename()) {
+            println!("Processing file: {}", filename);
+            
             if file_count >= MAX_FILE_COUNT {
+                println!("Too many files: {}", file_count);
                 return Ok(HttpResponse::BadRequest().json(UploadResponse {
                     success: false,
                     message: format!("Maximum {} files allowed", MAX_FILE_COUNT),
@@ -208,11 +257,17 @@ async fn upload_files(mut payload: Multipart, session: actix_session::Session) -
             let unique_filename = format!("{}_{}", Uuid::new_v4(), sanitized_filename);
             let filepath = PathBuf::from(UPLOAD_DIR).join(&unique_filename);
             let filepath_clone = filepath.clone();
+            
+            println!("Sanitized filename: {} -> {}", filename, sanitized_filename);
+            println!("Unique filename: {}", unique_filename);
 
             // Create the file
             let mut f = web::block(move || std::fs::File::create(filepath))
                 .await?
-                .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Failed to create file: {}", e)))?;
+                .map_err(|e| {
+                    println!("Failed to create file: {}", e);
+                    actix_web::error::ErrorInternalServerError(format!("Failed to create file: {}", e))
+                })?;
 
             let mut file_size = 0;
 
@@ -220,6 +275,7 @@ async fn upload_files(mut payload: Multipart, session: actix_session::Session) -
             while let Some(chunk) = field.try_next().await? {
                 file_size += chunk.len();
                 if file_size > MAX_FILE_SIZE {
+                    println!("File too large: {} bytes", file_size);
                     // Remove the partially written file
                     let _ = std::fs::remove_file(&filepath_clone);
                     return Ok(HttpResponse::BadRequest().json(UploadResponse {
@@ -231,39 +287,58 @@ async fn upload_files(mut payload: Multipart, session: actix_session::Session) -
 
                 f = web::block(move || f.write_all(&chunk).map(|_| f))
                     .await?
-                    .map_err(|e| actix_web::error::ErrorInternalServerError(format!("Failed to write file: {}", e)))?;
+                    .map_err(|e| {
+                        println!("Failed to write chunk: {}", e);
+                        actix_web::error::ErrorInternalServerError(format!("Failed to write file: {}", e))
+                    })?;
             }
+            
+            println!("File written successfully: {} bytes", file_size);
+
+            let (file_type, can_preview) = get_file_type_and_preview(&sanitized_filename);
+            println!("File type: {}, can_preview: {}", file_type, can_preview);
 
             uploaded_files.push(FileInfo {
                 name: sanitized_filename.clone(),
                 size: file_size as u64,
                 path: unique_filename.clone(),
-                file_type: get_file_type_and_preview(&sanitized_filename).0,
-                can_preview: get_file_type_and_preview(&sanitized_filename).1,
+                file_type,
+                can_preview,
             });
 
             file_count += 1;
+        } else {
+            println!("No filename found in field");
         }
     }
 
+    println!("Upload complete: {} files", uploaded_files.len());
+
     if uploaded_files.is_empty() {
-        Ok(HttpResponse::BadRequest().json(UploadResponse {
+        println!("No files were uploaded");
+        let response = HttpResponse::BadRequest().json(UploadResponse {
             success: false,
             message: "No files were uploaded".to_string(),
             files: vec![],
-        }))
+        });
+        println!("Sending response: {:?}", response);
+        Ok(response)
     } else {
-        Ok(HttpResponse::Ok().json(UploadResponse {
+        println!("Successfully uploaded {} file(s)", uploaded_files.len());
+        let response = HttpResponse::Ok().json(UploadResponse {
             success: true,
             message: format!("Successfully uploaded {} file(s)", uploaded_files.len()),
             files: uploaded_files,
-        }))
+        });
+        println!("Sending success response");
+        Ok(response)
     }
 }
 
 // List all uploaded files
 #[get("/files")]
 async fn list_files(session: actix_session::Session) -> ActixResult<HttpResponse> {
+    println!("=== FILES REQUEST RECEIVED ===");
     require_auth(&session)?;
     let mut files = Vec::new();
 
@@ -471,8 +546,8 @@ async fn main() -> std::io::Result<()> {
     };
 
     HttpServer::new(move || {
-        // Generate a secret key for sessions (in production, use a persistent secret)
-        let secret_key = Key::generate();
+        // Use a fixed secret key for development (in production, use a persistent secret from env)
+        let secret_key = Key::from(&[0; 64]); // Fixed key for development
         
         App::new()
             .app_data(web::Data::new(app_state.clone()))
@@ -483,6 +558,9 @@ async fn main() -> std::io::Result<()> {
                     secret_key,
                 )
                 .cookie_secure(false) // Set to true in production with HTTPS
+                .cookie_http_only(true)
+                .cookie_same_site(actix_web::cookie::SameSite::Lax)
+                .cookie_path("/".to_string())
                 .build(),
             )
             .wrap(IdentityMiddleware::default())
