@@ -366,7 +366,7 @@ where
             web_sys::console::log_1(&"No files selected".into());
             return;
         }
-            
+
         if is_uploading.get() {
             web_sys::console::log_1(&"Upload already in progress, ignoring click".into());
             return;
@@ -489,6 +489,7 @@ fn FileItem(
     let file_path_preview_btn = file_path.clone();
     let file_path_delete = file_path.clone();
     let file_type_preview_check = file_type.clone();
+    let file_type_preview_check_2 = file_type.clone(); // Additional clone for the second Show
     let file_type_preview = file_type.clone();
     let file_type_preview_btn = file_type.clone();
     
@@ -539,6 +540,15 @@ fn FileItem(
                             view! { <div></div> }.into_view()
                         }
                     }
+                </div>
+            </Show>
+            
+            <Show when=move || !is_previewable_file(&file_type_preview_check_2)>
+                <div class="file-icon-preview">
+                    <i class=format!("file-icon {}", get_file_type_icon(&file_type)) style=format!("color: {}", get_file_type_color(&file_type))></i>
+                    <div class="file-type-label" style=format!("color: {}", get_file_type_color(&file_type))>
+                        {&file_type}
+                    </div>
                 </div>
             </Show>
             
@@ -767,17 +777,9 @@ async fn upload_files(files: Vec<File>) -> Result<UploadResponse, String> {
     web_sys::console::log_1(&format!("Response ok: {}", response.ok()).into());
     
     // Check response headers
-    if let Ok(headers) = response.headers().entries() {
-        web_sys::console::log_1(&"Response headers:".into());
-        for header in headers {
-            if let Ok(header_array) = header {
-                if let (Some(key), Some(value)) = (header_array.get(0), header_array.get(1)) {
-                    if let (Ok(key_str), Ok(value_str)) = (key.as_string(), value.as_string()) {
-                        web_sys::console::log_1(&format!("  {}: {}", key_str, value_str).into());
-                    }
-                }
-            }
-        }
+    web_sys::console::log_1(&"Response headers:".into());
+    for (key, value) in response.headers().entries() {
+        web_sys::console::log_1(&format!("  {}: {}", key, value).into());
     }
     
     if response.status() == 200 {
@@ -900,6 +902,20 @@ fn get_file_type_color(file_type: &str) -> &'static str {
     }
 }
 
+fn get_file_type_icon(file_type: &str) -> &'static str {
+    match file_type {
+        "image" => "fa-regular fa-file-image",
+        "video" => "fa-regular fa-file-video", 
+        "audio" => "fa-regular fa-file-audio",
+        "text" => "fa-regular fa-file-lines",
+        "code" => "fa-regular fa-file-code",
+        "pdf" => "fa-regular fa-file-pdf",
+        "archive" => "fa-regular fa-file-zipper",
+        "unknown" => "fa-regular fa-file",
+        _ => "fa-regular fa-file-lines"
+    }
+}
+
 fn is_previewable_file(file_type: &str) -> bool {
     matches!(file_type, "image" | "video")
 }
@@ -914,7 +930,7 @@ const MAIN_STYLES: &str = r#"
 @import url("https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500&display=swap");
 
 body {
-    font-family: "DM Mono", monospace;
+    font-family: "DM Mono", "Nerd Font", monospace;
     letter-spacing: -0.05ch;
     background-color: #1e1e2e;
     color: #cdd6f4;
@@ -1403,6 +1419,34 @@ body {
 
 .file-preview video {
     width: 100%;
+}
+
+.file-icon-preview {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    border: 1px solid #45475a;
+    border-radius: 8px;
+    background-color: #1e1e2e;
+    min-height: 180px;
+    margin-bottom: 15px;
+    padding: 20px;
+}
+
+.file-icon {
+    font-size: 64px;
+    margin-bottom: 15px;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+    font-family: "Font Awesome 6 Free", "Font Awesome 6 Pro", "Font Awesome 5 Free", "Font Awesome 5 Pro";
+    font-weight: 400;
+}
+
+.file-type-label {
+    font-size: 14px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 /* Responsive design */
