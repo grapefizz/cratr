@@ -2,6 +2,14 @@
 
 A simple and secure file upload/download server built with Actix Web and Leptos for Linux systems and home servers as cloud storage.
 
+## Screenshots
+
+### Main Page
+![Main Page](screenshots/1.png)
+
+### Login Page
+![Login Page](screenshots/2.png)
+
 ## Features
 
 - **Secure Authentication**: Login system to protect file access
@@ -42,7 +50,7 @@ You can modify the following constants in `src/main.rs`:
 - `MAX_FILE_COUNT`: Maximum files per upload (default: 10)
 - `UPLOAD_DIR`: Directory to store uploaded files (default: ./uploads)
 - `DEFAULT_USERNAME`: Default login username (default: "admin")
-- `DEFAULT_PASSWORD`: Default login password (default: "cratr123")
+- `DEFAULT_PASSWORD`: Default login password (default: "admin")
 
 To change the server bind address, modify the `.bind()` call in the main function.
 
